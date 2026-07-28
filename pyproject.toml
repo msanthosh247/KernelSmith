@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kernelsmith"
+version = "0.0.1"
+description = "A compiler that turns declarative strategy graphs into fused CUDA kernels."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Santhosh M", email = "msanthosh247@gmail.com" }]
+keywords = ["cuda", "backtesting", "compiler", "dsl", "gpu", "numba"]
+dependencies = ["numpy>=1.24"]
+
+[project.urls]
+Homepage = "https://github.com/msanthosh247/KernelSmith"
+
+[project.optional-dependencies]
+viz = ["networkx>=3.0", "matplotlib>=3.7"]
+dev = ["pytest>=8", "networkx>=3.0", "matplotlib>=3.7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
