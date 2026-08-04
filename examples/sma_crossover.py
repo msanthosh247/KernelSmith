@@ -1,39 +1,49 @@
-"""SMA-crossover demo: build a strategy graph and plot it.
+"""SMA-crossover demo: build a strategy graph, sweep parameters, plot the graph.
 
 Run:  python examples/sma_crossover.py [savepath.png]
-Without a savepath the plot opens in a window.
+Without a savepath the graph plot opens in a window.
 """
 import sys
 
-from kernelsmith import CallFactory, Call, Graph, F4, I4, SCAL, VEC
+import numpy as np
 
-# feature specs - signatures only, the kernels come in later phases
-sma = CallFactory("sma", input_signature=[VEC(F4), SCAL(I4)], buffer_signature=[], output_signature=[VEC(F4)])
-minmax = CallFactory(
-    "minmax",
-    input_signature=[VEC(F4), SCAL(I4)],
-    buffer_signature=[VEC(F4)],
-    output_signature=[VEC(F4), VEC(F4)],
-)
+from kernelsmith import Graph
+from kernelsmith.backends.cpu import CpuBackend
+from kernelsmith.features import rolling_min_max, sma
 
+# --- describe the strategy once -------------------------------------------
 g = Graph()
-close = g.input("close")
-opn = g.input("open")
-fast = g.int_param("fast")
-slow = g.int_param("slow")
+close, opn = g.input("close"), g.input("open")
+fast, slow = g.int_param("fast"), g.int_param("slow")
 
 med = (close + opn) / 2
-s1 = sma(med, fast)
-s2 = sma(med, slow)
-signal = (s1 > s2) & (close > s2)
-lo, hi = minmax(close, slow)
-range_ok = (hi - lo) > 0.5
+# note: sma(med, slow) is written twice, so the graph really does contain two
+# identical calls - the CSE pass will collapse them into one
+signal = (sma(med, fast) > sma(med, slow)) & (close > sma(med, slow))
+
+low, high = rolling_min_max(close, slow)
+range_ok = (high - low) > 0.5
 
 g.output("signal", signal)
 g.output("range_ok", range_ok)
 
-order = g.build()
-print("topo order:", [op.factory.func_name if isinstance(op, Call) else op.operation for op in order])
+print("topo order:", [op.name for op in g.build()])
 
-savepath = sys.argv[1] if len(sys.argv) > 1 else None
-g.visualize(savepath=savepath)
+# --- run it over a parameter sweep ----------------------------------------
+rng = np.random.default_rng(7)
+bars = 250
+close_prices = (np.cumsum(rng.normal(0, 1, bars)) + 100.0).astype(np.float32)
+open_prices = (close_prices + rng.normal(0, 0.2, bars)).astype(np.float32)
+
+program = CpuBackend().compile(g)
+results = program.run(
+    inputs={"close": close_prices, "open": open_prices},
+    params={"fast": [5, 10, 20], "slow": [20, 50, 100]},
+)
+
+print("signal shape (params, bars):", results["signal"].shape)
+for i, (f, s) in enumerate(zip([5, 10, 20], [20, 50, 100])):
+    print(f"  fast={f:>3} slow={s:>4}  ->  {results['signal'][i].sum():>4} long bars")
+
+# --- and look at it --------------------------------------------------------
+g.visualize(savepath=sys.argv[1] if len(sys.argv) > 1 else None)

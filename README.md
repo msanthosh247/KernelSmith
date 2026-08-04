@@ -13,9 +13,9 @@ KernelSmith is a small compiler for Monte Carlo backtesting workloads: you descr
 The graph is **value-centric SSA**: every value is created exactly once by its producer, which makes output overwrites and dependency cycles unrepresentable by construction — a whole class of framework bugs ruled out before any pass runs.
 
 ```python
-from kernelsmith import CallFactory, Graph, F4, I4, SCAL, VEC
-
-sma = CallFactory("sma", [VEC(F4), SCAL(I4)], [], [VEC(F4)])
+from kernelsmith import Graph
+from kernelsmith.backends.cpu import CpuBackend
+from kernelsmith.features import sma
 
 g = Graph()
 close, opn = g.input("close"), g.input("open")
@@ -23,9 +23,15 @@ fast, slow = g.int_param("fast"), g.int_param("slow")
 
 med    = (close + opn) / 2            # operators build typed graph nodes
 signal = sma(med, fast) > sma(med, slow)
-
 g.output("signal", signal)
-g.build()                             # topological schedule, producers first
+
+program = CpuBackend().compile(g)     # schedules the graph, resolves implementations
+out = program.run(
+    inputs={"close": close_prices, "open": open_prices},
+    params={"fast": [5, 10, 20], "slow": [20, 50, 100]},   # one thread per column, later
+)
+out["signal"].shape                   # (3, n_bars) - stacked along the parameter axis
+
 g.visualize()                         # the plot below
 ```
 
@@ -45,7 +51,7 @@ Five layers, imports only point downward:
 |---|---|---|
 | `dsl` | typed value nodes, operator overloading, call factories, `Graph` | ✅ working |
 | `ir` | passes: topological scheduling ✅, DCE, CSE, fusion, liveness-based allocation | ⏳ next |
-| `backends` | CPU reference (test oracle), CUDA via numba, Triton (planned) | ⏳ |
+| `backends` | CPU reference (test oracle) ✅, CUDA via numba, Triton (planned) | 🔨 in progress |
 | `runtime` | memory planner, sessions, kernel cache | ⏳ |
 | `backtest` | position sizers, portfolio sim, cost models — built *on* the compiler | ⏳ |
 
@@ -55,7 +61,7 @@ Five layers, imports only point downward:
 - [x] Value-centric SSA graph with multi-output feature calls
 - [x] Topological scheduling + dependency levels
 - [x] Layered graph visualizer
-- [ ] CPU reference backend (every feature ships a numpy oracle; parity tests)
+- [x] CPU reference backend (every feature ships a numpy oracle; parity tests)
 - [ ] Dead-code and common-subexpression elimination, operator fusion
 - [ ] Liveness-based buffer allocation
 - [ ] CUDA backend (numba) with coalesced `(T, F, P)` layout

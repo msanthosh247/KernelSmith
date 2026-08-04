@@ -9,6 +9,7 @@ from kernelsmith import (
     Graph,
     GraphError,
     I4,
+    Op,
     SCAL,
     Shape,
     ValueNode,
@@ -45,7 +46,32 @@ def test_expression_structure():
     g, _ = make_graph()
     sig = g.outputs["signal"]
     assert sig.dtype is DType.BOOL and sig.shape is Shape.VECTOR
-    assert sig.parent.operation == "&"
+    assert sig.parent.name == "&"
+
+
+def test_ops_share_one_interface():
+    """Expr and Call are both Ops: name, args, outs, buffer_signature."""
+    g, sma = make_graph()
+    for op in g.build():
+        assert isinstance(op, Op)
+        assert isinstance(op.name, str)
+        assert isinstance(op.args, tuple) and isinstance(op.outs, tuple)
+        assert all(isinstance(v, ValueNode) for v in op.args + op.outs)
+        assert isinstance(op.buffer_signature, tuple)
+
+    # Expr exposes its single output through outs as well as .output
+    expr = g.outputs["signal"].parent
+    assert expr.outs == (expr.output,)
+
+    # dtype/shape live on values, never on ops - a multi-output op has no single dtype
+    assert not hasattr(expr, "dtype")
+
+
+def test_call_reports_factory_buffers():
+    minmax = CallFactory("mm", [VEC(F4), SCAL(I4)], [VEC(F4), VEC(F4)], [VEC(F4)])
+    g = Graph()
+    out = minmax(g.input("close"), g.int_param("n"))
+    assert len(out.parent.buffer_signature) == 2
 
 
 def test_const_wrapping_and_division():
@@ -113,6 +139,14 @@ def test_signature_errors():
         sma(close)
     with pytest.raises(DslTypeError, match="argument 0"):
         sma(n, n)
+
+
+def test_output_lookup_is_explicit():
+    g, _ = make_graph()
+    signal = g.outputs["signal"]
+    assert g.is_output(signal)
+    assert g.output_names[signal] == "signal"
+    assert not g.is_output(g.input("close"))
 
 
 def test_output_registry_rules():

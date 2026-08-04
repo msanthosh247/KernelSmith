@@ -15,11 +15,11 @@ from kernelsmith.dsl.types import (
     promote_dtype,
     result_shape,
 )
-from kernelsmith.dsl.graph import Call, CallFactory, Expr, Graph, ValueNode
+from kernelsmith.dsl.graph import Call, CallFactory, Expr, Graph, Op, ValueNode
 
 __all__ = [
     "B1", "CONST_OPERAND_TYPES", "Call", "CallFactory", "DType", "DTypeSignature",
-    "Expr", "F4", "Graph", "I4", "SCAL", "Shape", "ShapeSignature", "VEC",
+    "Expr", "F4", "Graph", "I4", "Op", "SCAL", "Shape", "ShapeSignature", "VEC",
     "ValueNode", "ValueSignature", "VarRole", "infer_dtype", "promote_dtype",
     "result_shape",
 ]

@@ -1,9 +1,13 @@
-"""Graph construction layer: value nodes, calls, and the Graph container.
+"""Graph construction layer: value nodes, operations, and the Graph container.
 
 Value-centric SSA: every ValueNode is created exactly once by its producer,
 so output overwrites and cycles are unrepresentable by construction. A node
 carries WHAT it is (dtype/shape/role) and WHO made it (parent) - never WHERE
 it lives. Buffer locations belong to the allocator pass.
+
+Operations (Expr for elementwise math, Call for feature invocations) share the
+Op interface - name, args, outs, buffer_signature - so passes and backends are
+written once instead of once per operation kind.
 """
 from __future__ import annotations
 
@@ -32,7 +36,7 @@ class ValueNode:
         role: VarRole,
         name: Optional[str] = None,
         val: float | int | bool | None = None,
-        parent: "Expr | Call | None" = None,
+        parent: "Op | None" = None,
         out_index: int = 0,
     ):
         self.dtype = dtype
@@ -86,43 +90,76 @@ class ValueNode:
         return f"<ValueNode {self.role.value} {self.shape.value} {self.dtype.value} {tag}".rstrip() + ">"
 
 
-class Expr:
-    """One application of an elementwise operation. ``right`` is None for unary ops."""
+class Op:
+    """Base class for graph operations.
 
-    def __init__(self, operation: str, left: ValueNode, right: Optional[ValueNode]):
-        self.operation = operation
-        self.left = left
-        self.right = right
-        self.dtype = promote_dtype(
-            left.dtype, right.dtype if right is not None else None, operation
-        )
-        self.shape = result_shape(left.shape, right.shape if right is not None else None)
-        self.output = ValueNode(self.dtype, self.shape, VarRole.TEMP, parent=self)
+    Passes and backends see only this interface:
 
-    @property
-    def args(self) -> Tuple[ValueNode, ...]:
-        return (self.left,) if self.right is None else (self.left, self.right)
+    ``name``              display name ("+" for an Expr, "sma" for a Call)
+    ``args``              values consumed, in signature order
+    ``outs``              values produced, in signature order
+    ``buffer_signature``  scratch space the op needs, provisioned by the allocator
+
+    dtype and shape deliberately live on the *values*, not on the op: a
+    multi-output op has no single dtype.
+    """
+
+    name: str
+    args: Tuple[ValueNode, ...] = ()
+    outs: Tuple[ValueNode, ...] = ()
+    buffer_signature: Tuple[ValueSignature, ...] = ()
 
     def __repr__(self):
-        return f"<Expr '{self.operation}'>"
+        return f"<{type(self).__name__} '{self.name}'>"
 
 
-class Call:
+class Expr(Op):
+    """One application of an elementwise operation. ``right`` is None for unary ops.
+
+    Elementwise ops are *transparent*: the compiler can see the formula and
+    inline it, which is what makes them fusable (unlike an opaque Call).
+    """
+
+    def __init__(self, operation: str, left: ValueNode, right: Optional[ValueNode]):
+        self.name = operation
+        self.left = left
+        self.right = right
+        self.args = (left,) if right is None else (left, right)
+
+        dtype = promote_dtype(
+            left.dtype, right.dtype if right is not None else None, operation
+        )
+        shape = result_shape(left.shape, right.shape if right is not None else None)
+        self.outs = (ValueNode(dtype, shape, VarRole.TEMP, parent=self),)
+
+    @property
+    def output(self) -> ValueNode:
+        """Convenience for the DSL construction path; passes should use ``outs``."""
+        return self.outs[0]
+
+
+class Call(Op):
     """One invocation of a CallFactory. The factory is the immutable spec,
     the Call carries the per-use state (args, outs)."""
 
     def __init__(self, factory: "CallFactory", args: Tuple[ValueNode, ...]):
         self.factory = factory
+        self.name = factory.func_name
         self.args = tuple(args)
         self.outs: Tuple[ValueNode, ...] = ()
 
-    def __repr__(self):
-        return f"<Call '{self.factory.func_name}'>"
+    @property
+    def buffer_signature(self) -> Tuple[ValueSignature, ...]:
+        return tuple(self.factory.buffer_signature)
 
 
 class CallFactory:
     """Immutable spec of a feature: signatures only.
-    Each __call__ makes a fresh Call - never store per-use state on the factory."""
+
+    Each __call__ makes a fresh Call - never store per-use state on the factory.
+    Implementations live in the backends, keyed by factory, so adding a backend
+    touches no DSL code.
+    """
 
     def __init__(
         self,
@@ -174,13 +211,16 @@ class Graph:
     """Container for one computation: named inputs, params and outputs.
 
     The graph itself is discovered by walking backwards from the registered
-    outputs - nodes reference their producers, producers reference their args.
+    outputs - values reference their producers, producers reference their args.
     """
 
     def __init__(self):
-        self.inputs: dict = {}
-        self.params: dict = {}
-        self.outputs: dict = {}
+        self.inputs: dict = {}          # name -> ValueNode
+        self.params: dict = {}          # name -> ValueNode
+        self.outputs: dict = {}         # name -> ValueNode
+        self.output_names: dict = {}    # ValueNode -> name  (inverse of outputs)
+        self.ops: List[Op] = []
+        self.op_levels: dict = {}
 
     def input(self, name: str, dtype: DType = DType.FLOAT32) -> ValueNode:
         if name in self.inputs:
@@ -214,8 +254,13 @@ class Graph:
         if name in self.outputs:
             raise GraphError(f"duplicate output name '{name}'")
         self.outputs[name] = node
+        self.output_names[node] = name
 
-    def build(self) -> List["Expr | Call"]:
+    def is_output(self, node: ValueNode) -> bool:
+        """True when ``node`` is registered as an output (never test the dicts directly)."""
+        return node in self.output_names
+
+    def build(self) -> List[Op]:
         """Discover every op reachable from the outputs, in topological order.
 
         Walks backwards (ValueNode.parent is the producing op, op.args are the
@@ -226,7 +271,7 @@ class Graph:
         if not self.outputs:
             raise GraphError("no outputs registered - call graph.output(name, node) first")
 
-        self.ops: List[Expr | Call] = []
+        self.ops = []
         visited = set()
         stack = []
 
@@ -248,7 +293,7 @@ class Graph:
                     stack.append((arg.parent, False))
 
         # dependency level of every op, roots at 0 (feeds the layered plot, later the scheduler)
-        self.op_levels: dict = {}
+        self.op_levels = {}
         for op in self.ops:
             lvl = 0
             for arg in op.args:
@@ -269,15 +314,14 @@ class Graph:
         import matplotlib.pyplot as plt
         from matplotlib.lines import Line2D
 
-        if not hasattr(self, "ops"):
+        if not self.ops:
             self.build()
 
         _dt = {DType.FLOAT32: "f32", DType.INT32: "i32", DType.BOOL: "b1"}
-        out_names = {node: name for name, node in self.outputs.items()}
 
         def _value_label(v: ValueNode) -> str:
-            if v in out_names:
-                return f"{out_names[v]}\n{_dt[v.dtype]}"
+            if self.is_output(v):
+                return f"{self.output_names[v]}\n{_dt[v.dtype]}"
             if v.role in (VarRole.INPUT, VarRole.PARAM):
                 return f"{v.name}\n{_dt[v.dtype]}"
             if v.role is VarRole.CONST:
@@ -294,18 +338,22 @@ class Graph:
                 labels[id(v)] = _value_label(v)
 
         for op in self.ops:
-            kind = "call" if isinstance(op, Call) else "expr"
-            name = op.factory.func_name if isinstance(op, Call) else op.operation
-            G.add_node(id(op), obj=op, kind=kind, layer=2 * self.op_levels[op] + 1)
-            labels[id(op)] = name
+            # the one place the operation kind genuinely matters: node shape
+            G.add_node(
+                id(op),
+                obj=op,
+                kind="call" if isinstance(op, Call) else "expr",
+                layer=2 * self.op_levels[op] + 1,
+            )
+            labels[id(op)] = op.name
 
             for arg in op.args:
                 _add_value(arg)
                 G.add_edge(id(arg), id(op))
 
-            for o in (op.outs if isinstance(op, Call) else (op.output,)):
-                _add_value(o)
-                G.add_edge(id(op), id(o))
+            for out in op.outs:
+                _add_value(out)
+                G.add_edge(id(op), id(out))
 
         pos = nx.multipartite_layout(G, subset_key="layer")
 
@@ -329,8 +377,8 @@ class Graph:
                 continue
             nx.draw_networkx_nodes(
                 G, pos, nodelist=ids, node_shape="o", node_color=color, node_size=1500,
-                edgecolors=["#c0392b" if G.nodes[n]["obj"] in out_names else "#444444" for n in ids],
-                linewidths=[2.5 if G.nodes[n]["obj"] in out_names else 1.0 for n in ids],
+                edgecolors=["#c0392b" if self.is_output(G.nodes[n]["obj"]) else "#444444" for n in ids],
+                linewidths=[2.5 if self.is_output(G.nodes[n]["obj"]) else 1.0 for n in ids],
             )
 
         expr_ids = [n for n, d in G.nodes(data=True) if d["kind"] == "expr"]
