@@ -50,7 +50,7 @@ Five layers, imports only point downward:
 | Layer | Contents | Status |
 |---|---|---|
 | `dsl` | typed value nodes, operator overloading, call factories, `Graph` | ✅ working |
-| `ir` | passes: topological scheduling ✅, DCE, CSE, fusion, liveness-based allocation | ⏳ next |
+| `ir` | passes: topological scheduling ✅, CSE ✅, liveness, fusion, buffer allocation | 🔨 in progress |
 | `backends` | CPU reference (test oracle) ✅, CUDA via numba, Triton (planned) | 🔨 in progress |
 | `runtime` | memory planner, sessions, kernel cache | ⏳ |
 | `backtest` | position sizers, portfolio sim, cost models — built *on* the compiler | ⏳ |
@@ -62,7 +62,9 @@ Five layers, imports only point downward:
 - [x] Topological scheduling + dependency levels
 - [x] Layered graph visualizer
 - [x] CPU reference backend (every feature ships a numpy oracle; parity tests)
-- [ ] Dead-code and common-subexpression elimination, operator fusion
+- [x] Common-subexpression elimination (commutative-aware, float-safe)
+- [ ] Liveness analysis and dead-value elimination
+- [ ] Operator fusion
 - [ ] Liveness-based buffer allocation
 - [ ] CUDA backend (numba) with coalesced `(T, F, P)` layout
 - [ ] Benchmarks vs. multiprocessing CPU baseline

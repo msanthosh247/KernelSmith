@@ -23,6 +23,7 @@ from kernelsmith.backends.base import Backend, CompiledProgram
 from kernelsmith.dsl.graph import Call, CallFactory, Expr, Graph, Op, ValueNode
 from kernelsmith.dsl.types import VarRole
 from kernelsmith.errors import GraphError
+from kernelsmith.ir import cse
 
 # elementwise operators: the Expr counterpart of the feature registry
 NUMPY_OPS: Dict[str, Callable] = {
@@ -61,10 +62,13 @@ def cpu_impl(factory: CallFactory):
 class CpuProgram(CompiledProgram):
     """A graph with every op resolved to a numpy callable."""
 
-    def __init__(self, graph: Graph, ops: List[Op], impls: Dict[Op, Callable]):
+    def __init__(self, graph: Graph, ops: List[Op], impls: Dict[Op, Callable] , replace: Dict[ValueNode, ValueNode] = None):
         self.graph = graph
         self.ops = ops
         self.impls = impls
+        if replace is None:
+            replace = dict()
+        self.replace = replace
 
     def _seed(self, inputs: dict, params: dict, index: int) -> dict:
         env = {}
@@ -77,6 +81,7 @@ class CpuProgram(CompiledProgram):
         return env
 
     def _read(self, node: ValueNode, env: dict):
+        node = self.replace.get(node , node)
         if node.role is VarRole.CONST:
             return node.val
         if node not in env:
@@ -128,6 +133,7 @@ class CpuBackend(Backend):
 
     def compile(self, graph: Graph) -> CpuProgram:
         ops = graph.build()
+        ops , replace = cse(ops)
 
         impls: Dict[Op, Callable] = {}
         missing: List[str] = []
@@ -154,4 +160,4 @@ class CpuBackend(Backend):
                 "no CPU implementation for: " + ", ".join(sorted(set(missing)))
             )
 
-        return CpuProgram(graph, ops, impls)
+        return CpuProgram(graph, ops, impls , replace)

@@ -22,7 +22,7 @@ med = (close + opn) / 2
 signal = (sma(med, fast) > sma(med, slow)) & (close > sma(med, slow))
 
 low, high = rolling_min_max(close, slow)
-range_ok = (high - low) > 0.5
+range_ok = (high - low) > 0.5 # * close
 
 g.output("signal", signal)
 g.output("range_ok", range_ok)
@@ -36,6 +36,8 @@ close_prices = (np.cumsum(rng.normal(0, 1, bars)) + 100.0).astype(np.float32)
 open_prices = (close_prices + rng.normal(0, 0.2, bars)).astype(np.float32)
 
 program = CpuBackend().compile(g)
+print(f"after CSE: {len(g.ops)} ops -> {len(program.ops)} ops")
+
 results = program.run(
     inputs={"close": close_prices, "open": open_prices},
     params={"fast": [5, 10, 20], "slow": [20, 50, 100]},
