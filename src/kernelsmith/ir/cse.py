@@ -16,7 +16,7 @@ def arg_key(v , number_of):
     vnum = number_of[v] 
     return (0 , vnum) #, number_of
 
-COMMUTATIVE = {"+" , "*" , "&" , "|" , "^" , "=="}
+COMMUTATIVE = {"+" , "*" , "&" , "|" , "^" , "==" , "!="}
 
 def cse(ops : List[Op]) -> Tuple[List[Op] , Dict[ValueNode , ValueNode]]:
     """

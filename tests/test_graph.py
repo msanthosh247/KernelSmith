@@ -112,6 +112,38 @@ def test_type_errors_at_build_time():
         ~close
 
 
+def test_truth_testing_is_rejected():
+    """Comparisons build graph nodes, so a node has no truth value - saying so
+    turns a silently wrong answer into a loud one."""
+    g = Graph()
+    a, b = g.input("a"), g.input("b")
+
+    with pytest.raises(DslTypeError, match="ambiguous"):
+        bool(a)
+    with pytest.raises(DslTypeError, match="ambiguous"):
+        if a:
+            pass
+    with pytest.raises(DslTypeError, match="ambiguous"):
+        a and b
+    with pytest.raises(DslTypeError, match="ambiguous"):
+        assert a
+
+
+def test_membership_needs_sets_not_sequences():
+    """'in' over a list or tuple compares with '==', which builds a node - so it
+    must raise rather than report a bogus hit. Sets and dicts hash by identity."""
+    g = Graph()
+    a, b = g.input("a"), g.input("b")
+
+    with pytest.raises(DslTypeError, match="ambiguous"):
+        a in (b,)
+
+    assert a in {a}
+    assert b not in {a}
+    assert {a: 1}.get(a) == 1
+    assert any(x is a for x in (a, b))     # the identity idiom passes use
+
+
 # ---- factories -------------------------------------------------------------
 
 def test_two_calls_are_independent():

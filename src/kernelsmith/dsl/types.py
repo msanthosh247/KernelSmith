@@ -33,7 +33,7 @@ class VarRole(Enum):
 
 
 ARITH_OPS = {"+", "-", "*", "/"}
-COMPARE_OPS = {">", "<", ">=", "<=", "=="}
+COMPARE_OPS = {">", "<", ">=", "<=", "==" , "!="}
 LOGIC_OPS = {"&", "|", "^"}
 UNARY_OPS = {"~", "neg"}
 ALL_OPS = ARITH_OPS | COMPARE_OPS | LOGIC_OPS | UNARY_OPS

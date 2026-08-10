@@ -36,6 +36,7 @@ NUMPY_OPS: Dict[str, Callable] = {
     ">=": np.greater_equal,
     "<=": np.less_equal,
     "==": np.equal,
+    "!=": np.not_equal,
     "&": np.logical_and,
     "|": np.logical_or,
     "^": np.logical_xor,

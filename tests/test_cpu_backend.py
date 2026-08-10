@@ -70,6 +70,20 @@ def test_elementwise_with_constant_and_broadcast():
     np.testing.assert_allclose(out[0], (close + opn) / 2, rtol=1e-6)
 
 
+def test_comparison_operators_execute():
+    a, b = prices(40, 4), prices(40, 5)
+    g = Graph()
+    x, y = g.input("a"), g.input("b")
+    g.output("ne", x != y)
+    g.output("eq", x == y)
+    g.output("ge", x >= y)
+
+    out = CpuBackend().compile(g).run({"a": a, "b": b}, {})
+    np.testing.assert_array_equal(out["ne"][0], a != b)
+    np.testing.assert_array_equal(out["eq"][0], a == b)
+    np.testing.assert_array_equal(out["ge"][0], a >= b)
+
+
 def test_multi_output_feature():
     close = prices(50)
     g = Graph()

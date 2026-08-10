@@ -78,6 +78,7 @@ class ValueNode:
     def __and__(self, other): return self._binary_op(other, "&")
     def __or__(self, other): return self._binary_op(other, "|")
     def __xor__(self, other): return self._binary_op(other, "^")
+    def __ne__(self , other): return self._binary_op(other , "!=")
     def __neg__(self): return self._unary_op("neg")
     def __invert__(self): return self._unary_op("~")
 
@@ -89,6 +90,17 @@ class ValueNode:
         tag = self.name or (repr(self.val) if self.role is VarRole.CONST else "")
         return f"<ValueNode {self.role.value} {self.shape.value} {self.dtype.value} {tag}".rstrip() + ">"
 
+    def __bool__(self):
+        raise DslTypeError(
+            """
+            the truth value of a ValueNode is ambiguous - it is a graph node , not a
+            concrete value. Use 'is' for identity, or a set / dict for membership
+            """
+        )
+
+
+
+        
 
 class Op:
     """Base class for graph operations.
