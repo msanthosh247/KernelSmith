@@ -5,12 +5,20 @@ import pytest
 from kernelsmith import CallFactory, F4, Graph, I4, KernelsmithError, SCAL, VarRole, VEC
 from kernelsmith.features import rolling_min_max, sma
 from kernelsmith.ir.allocate import PoolKind, PoolTracker, allocate
+from kernelsmith.ir.cse import cse
 from kernelsmith.ir.liveness import Liveness
 
 
 def plan(g):
     ops = g.build()
     live = Liveness(ops, g.outputs)
+    return ops, live, allocate(ops, live)
+
+
+def plan_full(g):
+    """build -> cse -> liveness -> allocate, the way a backend compiles."""
+    ops, replace = cse(g.build())
+    live = Liveness(ops, g.outputs, replace)
     return ops, live, allocate(ops, live)
 
 
@@ -186,11 +194,30 @@ def random_graph(seed):
     return g
 
 
+def test_allocation_survives_cse():
+    """A kept op can still name a value whose producer was dropped, so the
+    allocator has to resolve arguments through the replacement map."""
+    g = Graph()
+    close, opn = g.input("close"), g.input("open")
+    fast, slow = g.int_param("fast"), g.int_param("slow")
+    med = (close + opn) / 2
+    g.output("signal", (sma(med, fast) > sma(med, slow)) & (close > sma(med, slow)))
+
+    ops, live, alloc = plan_full(g)
+
+    assert sum(1 for op in ops if op.name == "sma") == 2      # CSE dropped one
+    for op in ops:
+        for out in op.outs:
+            assert out in alloc.slots
+
+
 @pytest.mark.parametrize("seed", range(60))
-def test_live_values_never_share_a_slot(seed):
+@pytest.mark.parametrize("with_cse", [False, True])
+def test_live_values_never_share_a_slot(seed, with_cse):
     """The property that makes an allocation correct: at every step, two values
     that are both live are in different buffers."""
-    ops, live, alloc = plan(random_graph(seed))
+    build = plan_full if with_cse else plan
+    ops, live, alloc = build(random_graph(seed))
 
     for i in range(len(ops)):
         occupied = {}

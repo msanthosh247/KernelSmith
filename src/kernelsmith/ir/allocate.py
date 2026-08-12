@@ -99,9 +99,12 @@ def allocate(ops : List[Op] , live : Liveness) -> Allocation:
 
         # 4. release whatever ends here. args AND outs : a dead value is an
         # output whose last use is its own definition , so it never appears as
-        # anyone's argument. dict.fromkeys dedupes 'x * x' , where releasing
-        # twice would put one index in the free list twice
-        for value in dict.fromkeys(op.args + op.outs):
+        # anyone's argument. args go through the CSE map first - a kept op can
+        # still name a value whose producer was dropped. dict.fromkeys dedupes
+        # 'x * x' , where releasing twice would put one index in the free list
+        # twice
+        resolved_args = tuple(live.replace.get(arg , arg) for arg in op.args)
+        for value in dict.fromkeys(resolved_args + op.outs):
             if not _allocatable(value):
                 continue
             if value in live.outputs:

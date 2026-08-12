@@ -43,6 +43,41 @@ Type errors fail at graph-build time with messages that say what you probably me
 DslTypeError: '&' requires bool operands, got float32 and float32 - did you mean a comparison?
 ```
 
+## What the compiler decided
+
+`explain_graph(g)` runs the whole pipeline and reports it — the schedule, each op's
+dependency level, which buffer every result lives in, borrowed scratch, and values
+that are computed but never read:
+
+```
+10 ops   2 input(s)   2 param(s)   3 output(s)
+
+op  lvl  kind  name              outs                          scratch
+--- ---- ----- ----------------- ----------------------------- -------------
+0   0    expr  +                 T:f32v[0]                     -
+1   1    expr  /                 T:f32v[1]                     -
+2   2    call  stoch             O:f32v[0]                     f32v[0] f32v[2]
+3   0    call  rolling_min_max   T:f32v[2] T:f32v[0]*          -
+4   1    expr  -                 O:f32v[1]                     -
+5   2    call  sma               T:f32v[2]                     -
+6   3    expr  >                 T:b1v[0]                      -
+7   2    call  sma               T:f32v[0]                     -
+8   3    expr  >                 T:b1v[1]                      -
+9   4    expr  &                 O:b1v[0]                      -
+
+pools:
+  output/bool/vector  x1
+  output/float32/vector  x2
+  temp/bool/vector  x2
+  temp/float32/vector  x3
+
+* produced but never read - scratch space, never copied back
+```
+
+Three `sma(med, slow)` calls were written; two survive, because the duplicate was
+eliminated. Ten values share five temp buffers, because slots are recycled the
+moment a value's live interval ends.
+
 ## Architecture
 
 Five layers, imports only point downward:
