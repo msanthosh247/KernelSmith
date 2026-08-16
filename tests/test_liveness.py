@@ -7,10 +7,10 @@ from kernelsmith.ir.liveness import Liveness
 def dead_value_graph():
     """rolling_min_max produces two values but only the high is consumed."""
     g = Graph()
-    close, n = g.input("close"), g.int_param("n")
+    close, n = g.register_input("close"), g.int_param("n")
     low, high = rolling_min_max(close, n)
     scaled = high * 2
-    g.output("high2", scaled)
+    g.register_output("high2", scaled)
     return g, close, n, low, high, scaled
 
 
@@ -35,10 +35,10 @@ def test_produced_value_interval():
 
 def test_last_use_is_the_last_consumer():
     g = Graph()
-    close, opn = g.input("close"), g.input("open")
+    close, opn = g.register_input("close"), g.register_input("open")
     fast, slow = g.int_param("fast"), g.int_param("slow")
     med = (close + opn) / 2                       # consumed by three ops
-    g.output("x", (sma(med, fast) > sma(med, slow)) & (close > sma(med, slow)))
+    g.register_output("x", (sma(med, fast) > sma(med, slow)) & (close > sma(med, slow)))
 
     ops = g.build()
     live = Liveness(ops, g.outputs)
@@ -50,8 +50,8 @@ def test_last_use_is_the_last_consumer():
 
 def test_same_value_used_twice_in_one_op():
     g = Graph()
-    x = g.input("x")
-    g.output("sq", x * x)
+    x = g.register_input("x")
+    g.register_output("sq", x * x)
 
     live = Liveness(g.build(), g.outputs)
     assert live.last_use[x] == 0
@@ -97,10 +97,10 @@ def test_a_later_consumer_cannot_shorten_an_output():
     """An output that also feeds another op must still survive the whole
     schedule, or the allocator would recycle it before it is copied out."""
     g = Graph()
-    close, n = g.input("close"), g.int_param("n")
+    close, n = g.register_input("close"), g.int_param("n")
     avg = sma(close, n)
-    g.output("avg", avg)
-    g.output("doubled", avg * 2)
+    g.register_output("avg", avg)
+    g.register_output("doubled", avg * 2)
 
     ops = g.build()
     live = Liveness(ops, g.outputs)
@@ -115,9 +115,9 @@ def test_outputs_are_resolved_through_the_replacement_map():
     """After CSE a registered output can be a dropped duplicate; the survivor
     must inherit its output status."""
     g = Graph()
-    close, n = g.input("close"), g.int_param("n")
-    g.output("p", sma(close, n))
-    g.output("q", sma(close, n))          # duplicate, also registered
+    close, n = g.register_input("close"), g.int_param("n")
+    g.register_output("p", sma(close, n))
+    g.register_output("q", sma(close, n))          # duplicate, also registered
 
     kept, replace = cse(g.build())
     live = Liveness(kept, g.outputs, replace)
@@ -133,12 +133,12 @@ def test_outputs_are_resolved_through_the_replacement_map():
 
 def test_maps_are_total_and_ordered():
     g = Graph()
-    close, opn = g.input("close"), g.input("open")
+    close, opn = g.register_input("close"), g.register_input("open")
     fast, slow = g.int_param("fast"), g.int_param("slow")
     med = (close + opn) / 2
     low, high = rolling_min_max(close, slow)
-    g.output("signal", sma(med, fast) > sma(med, slow))
-    g.output("width", high - low)
+    g.register_output("signal", sma(med, fast) > sma(med, slow))
+    g.register_output("width", high - low)
 
     ops = g.build()
     live = Liveness(ops, g.outputs)

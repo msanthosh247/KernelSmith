@@ -6,6 +6,7 @@ with a message that names the offending dtypes.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
@@ -112,35 +113,41 @@ def result_shape(a: Shape, b: Optional[Shape] = None) -> Shape:
     return Shape.VECTOR
 
 
-class ValueSignature:
-    """dtype + shape pair describing one argument or output of a feature."""
 
-    def __init__(self, dtype: DType, shape: Shape):
-        self.dtype = dtype
-        self.shape = shape
+@dataclass(frozen = True , repr = False)
+class Signature:
+    """dtype plus shape , describing one argument , output or scratch buffer.
+
+    Scalar by default ; subscripting with a slice gives the series form , so a
+    signature reads the way the value does : ``F4`` is a float32 scalar and
+    ``F4[:]`` a float32 series.
+
+    Frozen because F4 / I4 / B1 are shared module-level singletons - mutating
+    one would change every signature built from it - and because being
+    hashable keeps signatures usable as dict keys in the passes.
+    """
+
+    dtype : DType
+    shape : Shape = Shape.SCALAR
+
+    def __getitem__(self, key) -> "Signature":
+        keys = key if isinstance(key , tuple) else (key ,)
+
+        if len(keys) > 1:
+            raise NotImplementedError(
+                f"only 1-d series are supported , got {len(keys)} dimensions"
+            )
+        if not keys or not isinstance(keys[0] , slice):
+            raise DslTypeError(
+                f"expected a slice , as in {self.dtype.value}[:] , got {key!r}"
+            )
+        return Signature(self.dtype , Shape.VECTOR)
 
     def __repr__(self):
-        return f"<{self.shape.value} {self.dtype.value}>"
+        suffix = "[:]" if self.shape is Shape.VECTOR else ""
+        return f"{self.dtype.value}{suffix}"
 
 
-class DTypeSignature:
-    def __init__(self, dtype: DType):
-        self.dtype = dtype
-
-
-class ShapeSignature:
-    """Composable signature builder: VEC(F4) -> vector float32, SCAL(I4) -> scalar int32."""
-
-    def __init__(self, shape: Shape):
-        self.shape = shape
-
-    def __call__(self, type_sig: DTypeSignature) -> ValueSignature:
-        return ValueSignature(type_sig.dtype, self.shape)
-
-
-F4 = DTypeSignature(DType.FLOAT32)
-I4 = DTypeSignature(DType.INT32)
-B1 = DTypeSignature(DType.BOOL)
-
-VEC = ShapeSignature(Shape.VECTOR)
-SCAL = ShapeSignature(Shape.SCALAR)
+F4 = Signature(DType.FLOAT32)
+I4 = Signature(DType.INT32)
+B1 = Signature(DType.BOOL)

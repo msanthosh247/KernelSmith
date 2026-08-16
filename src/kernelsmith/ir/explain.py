@@ -6,7 +6,7 @@ values are produced but never read.
 """
 from typing import List
 
-from kernelsmith.dsl import Call, DType, Graph, Op, Shape, ValueNode, ValueSignature
+from kernelsmith.dsl import Call, DType, Graph, Op, Shape, Signature, ValueNode
 from kernelsmith.ir.allocate import Allocation, Slot, allocate
 from kernelsmith.ir.cse import cse
 from kernelsmith.ir.liveness import Liveness
@@ -28,7 +28,7 @@ def _value_tag(value: ValueNode, allocation: Allocation, live: Liveness) -> str:
     return tag + "*" if value in live.dead else tag
 
 
-def _scratch_tag(signature: ValueSignature, slot: Slot) -> str:
+def _scratch_tag(signature: Signature, slot: Slot) -> str:
     return f"{_DTYPE_TAG[signature.dtype]}{_SHAPE_TAG[signature.shape]}[{_slot_index(slot)}]"
 
 

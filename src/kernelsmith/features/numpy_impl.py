@@ -1,37 +1,14 @@
-"""A small starter library of features.
+"""Reference implementations for the numpy CPU backend.
 
-Each feature is a signature (the CallFactory) plus one implementation per
-backend. Only the CPU reference exists today; the CUDA implementations attach
-to the same factories later without touching this file's specs.
+These are the oracle: every faster backend is diffed against them, so they are
+written for obviousness rather than speed. Importing this module registers them.
 """
 from __future__ import annotations
 
 import numpy as np
 
 from kernelsmith.backends.cpu import cpu_impl
-from kernelsmith.dsl.graph import CallFactory
-from kernelsmith.dsl.types import F4, I4, SCAL, VEC
-
-sma = CallFactory(
-    "sma",
-    input_signature=[VEC(F4), SCAL(I4)],
-    buffer_signature=[],
-    output_signature=[VEC(F4)],
-)
-
-ema = CallFactory(
-    "ema",
-    input_signature=[VEC(F4), SCAL(I4)],
-    buffer_signature=[],
-    output_signature=[VEC(F4)],
-)
-
-rolling_min_max = CallFactory(
-    "rolling_min_max",
-    input_signature=[VEC(F4), SCAL(I4)],
-    buffer_signature=[],
-    output_signature=[VEC(F4), VEC(F4)],
-)
+from kernelsmith.features.specs import ema, rolling_min_max, sma
 
 
 @cpu_impl(sma)

@@ -13,7 +13,7 @@ from kernelsmith.features import rolling_min_max, sma
 
 # --- describe the strategy once -------------------------------------------
 g = Graph()
-close, opn = g.input("close"), g.input("open")
+close, opn = g.register_input("close"), g.register_input("open")
 fast, slow = g.int_param("fast"), g.int_param("slow")
 
 med = (close + opn) / 2
@@ -24,8 +24,8 @@ signal = (sma(med, fast) > sma(med, slow)) & (close > sma(med, slow))
 low, high = rolling_min_max(close, slow)
 range_ok = (high - low) > 0.5 # * close
 
-g.output("signal", signal)
-g.output("range_ok", range_ok)
+g.register_output("signal", signal)
+g.register_output("range_ok", range_ok)
 
 print("topo order:", [op.name for op in g.build()])
 

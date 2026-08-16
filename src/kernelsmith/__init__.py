@@ -10,17 +10,16 @@ from kernelsmith.dsl import (
     Graph,
     I4,
     Op,
-    SCAL,
     Shape,
+    Signature,
     ValueNode,
     VarRole,
-    VEC,
 )
 
 __version__ = "0.0.1"
 
 __all__ = [
     "B1", "Call", "CallFactory", "DType", "DslTypeError", "Expr", "F4", "Graph",
-    "GraphError", "I4", "KernelsmithError", "Op", "SCAL", "Shape", "VEC",
+    "GraphError", "I4", "KernelsmithError", "Op", "Shape", "Signature",
     "ValueNode", "VarRole", "__version__",
 ]

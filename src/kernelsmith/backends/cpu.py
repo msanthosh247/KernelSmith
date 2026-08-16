@@ -19,7 +19,7 @@ from typing import Callable, Dict, List
 
 import numpy as np
 
-from kernelsmith.backends.base import Backend, CompiledProgram
+from kernelsmith.backends.base import Backend, CompiledProgram, check_call_arguments
 from kernelsmith.dsl.graph import Call, CallFactory, Expr, Graph, Op, ValueNode
 from kernelsmith.dsl.types import VarRole
 from kernelsmith.errors import GraphError
@@ -90,16 +90,7 @@ class CpuProgram(CompiledProgram):
         return env[node]
 
     def run(self, inputs: dict, params: dict) -> dict:
-        params = {name: np.atleast_1d(vals) for name, vals in params.items()}
-
-        for name in self.graph.params:
-            if name not in params:
-                raise GraphError(f"missing param '{name}'")
-
-        lengths = {len(v) for v in params.values()} or {1}
-        if len(lengths) > 1:
-            raise GraphError(f"all params must have the same length, got {sorted(lengths)}")
-        n_params = lengths.pop()
+        params, n_params, _ = check_call_arguments(self.graph, inputs, params)
 
         collected = {name: [] for name in self.graph.outputs}
 

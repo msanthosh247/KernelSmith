@@ -18,7 +18,7 @@ from kernelsmith.dsl.types import (
     CONST_OPERAND_TYPES,
     DType,
     Shape,
-    ValueSignature,
+    Signature,
     VarRole,
     infer_dtype,
     promote_dtype,
@@ -46,6 +46,12 @@ class ValueNode:
         self.val = val
         self.parent = parent
         self.out_index = out_index
+
+    @property
+    def signature(self) -> Signature:
+        """Derived, not stored: it cannot drift from dtype/shape, and graphs
+        with thousands of values do not pay for an extra object each."""
+        return Signature(self.dtype, self.shape)
 
     def _wrap(self, other) -> "ValueNode":
         if isinstance(other, ValueNode):
@@ -119,7 +125,7 @@ class Op:
     name: str
     args: Tuple[ValueNode, ...] = ()
     outs: Tuple[ValueNode, ...] = ()
-    buffer_signature: Tuple[ValueSignature, ...] = ()
+    buffer_signature: Tuple[Signature, ...] = ()
 
     def __repr__(self):
         return f"<{type(self).__name__} '{self.name}'>"
@@ -161,7 +167,7 @@ class Call(Op):
         self.outs: Tuple[ValueNode, ...] = ()
 
     @property
-    def buffer_signature(self) -> Tuple[ValueSignature, ...]:
+    def buffer_signature(self) -> Tuple[Signature, ...]:
         return tuple(self.factory.buffer_signature)
 
 
@@ -176,9 +182,9 @@ class CallFactory:
     def __init__(
         self,
         func_name: str,
-        input_signature: List[ValueSignature],
-        buffer_signature: List[ValueSignature],
-        output_signature: List[ValueSignature],
+        input_signature: List[Signature],
+        buffer_signature: List[Signature],
+        output_signature: List[Signature],
     ):
         self.func_name = func_name
         self.input_signature = list(input_signature)
@@ -201,10 +207,10 @@ class CallFactory:
                     raise DslTypeError(
                         f"'{self.func_name}' argument {i}: expected a ValueNode, got {type(inp).__name__}"
                     )
-            if sig.dtype is not inp.dtype or sig.shape is not inp.shape:
+            if sig != inp.signature:
                 raise DslTypeError(
-                    f"'{self.func_name}' argument {i}: expected {sig.shape.value} {sig.dtype.value},"
-                    f" got {inp.shape.value} {inp.dtype.value}"
+                    f"'{self.func_name}' argument {i}: expected {sig},"
+                    f" got {inp.signature}"
                 )
             wrapped.append(inp)
 
@@ -234,14 +240,14 @@ class Graph:
         self.ops: List[Op] = []
         self.op_levels: dict = {}
 
-    def input(self, name: str, dtype: DType = DType.FLOAT32) -> ValueNode:
+    def register_input(self, name: str, dtype: DType = DType.FLOAT32) -> ValueNode:
         if name in self.inputs:
             return self.inputs[name]
         node = ValueNode(dtype, Shape.VECTOR, VarRole.INPUT, name=name)
         self.inputs[name] = node
         return node
 
-    def _param(self, name: str, dtype: DType) -> ValueNode:
+    def register_param(self, name: str, dtype: DType) -> ValueNode:
         if name in self.params:
             node = self.params[name]
             if node.dtype is not dtype:
@@ -252,12 +258,12 @@ class Graph:
         return node
 
     def int_param(self, name: str) -> ValueNode:
-        return self._param(name, DType.INT32)
+        return self.register_param(name, DType.INT32)
 
     def float_param(self, name: str) -> ValueNode:
-        return self._param(name, DType.FLOAT32)
+        return self.register_param(name, DType.FLOAT32)
 
-    def output(self, name: str, node: ValueNode):
+    def register_output(self, name: str, node: ValueNode):
         if not isinstance(node, ValueNode):
             raise GraphError(
                 f"output '{name}' must be a single ValueNode, got {type(node).__name__}"
@@ -281,7 +287,7 @@ class Graph:
         cycles unrepresentable.
         """
         if not self.outputs:
-            raise GraphError("no outputs registered - call graph.output(name, node) first")
+            raise GraphError("no outputs registered - call graph.register_output(name, node) first")
 
         self.ops = []
         visited = set()

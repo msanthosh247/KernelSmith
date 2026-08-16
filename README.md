@@ -18,12 +18,12 @@ from kernelsmith.backends.cpu import CpuBackend
 from kernelsmith.features import sma
 
 g = Graph()
-close, opn = g.input("close"), g.input("open")
+close, opn = g.register_input("close"), g.register_input("open")
 fast, slow = g.int_param("fast"), g.int_param("slow")
 
 med    = (close + opn) / 2            # operators build typed graph nodes
 signal = sma(med, fast) > sma(med, slow)
-g.output("signal", signal)
+g.register_output("signal", signal)
 
 program = CpuBackend().compile(g)     # schedules the graph, resolves implementations
 out = program.run(
@@ -78,6 +78,34 @@ Three `sma(med, slow)` calls were written; two survive, because the duplicate wa
 eliminated. Ten values share five temp buffers, because slots are recycled the
 moment a value's live interval ends.
 
+## Performance
+
+The Numba CPU backend compiles a graph into one `@njit(parallel=True)` kernel,
+`prange` over parameter sets. Measured against the same strategy written by hand
+(`benchmarks/numba_cpu.py`, 16 cores, 8192 parameter sets × 4000 bars):
+
+| | time | |
+|---|---|---|
+| numpy reference interpreter | 409 ms | the correctness oracle, not a fast path |
+| hand-written njit, fused | 18.3 ms | |
+| hand-written njit, *same structure as generated* | 21.1 ms | |
+| **kernelsmith** | **20.8 ms** | 18× the interpreter, 1.14× hand-written |
+
+Generated code matches hand-written code doing the same work — the residual gap is
+one missing optimization, not codegen quality: kernelsmith currently emits five
+elementwise passes where the fused version does two. Operator fusion is next.
+
+`--threads` shows why that matters. The workload is memory-bandwidth-bound, so
+parallelism saturates long before the core count:
+
+```
+  1 thread    72.9 ms   1.00x        past ~4 threads the cores are waiting
+  2 threads   38.2 ms   1.91x        on memory, not computing - the only way
+  4 threads   27.5 ms   2.66x        left to go faster is to move less data,
+  8 threads   21.1 ms   3.46x        which is exactly what fusion does
+ 16 threads   20.4 ms   3.58x
+```
+
 ## Architecture
 
 Five layers, imports only point downward:
@@ -86,7 +114,7 @@ Five layers, imports only point downward:
 |---|---|---|
 | `dsl` | typed value nodes, operator overloading, call factories, `Graph` | ✅ working |
 | `ir` | passes: topological scheduling ✅, CSE ✅, liveness ✅, buffer allocation ✅, fusion | 🔨 in progress |
-| `backends` | CPU reference (test oracle) ✅, CUDA via numba, Triton (planned) | 🔨 in progress |
+| `backends` | CPU reference (test oracle) ✅, Numba parallel CPU ✅, CUDA, Triton | 🔨 in progress |
 | `runtime` | memory planner, sessions, kernel cache | ⏳ |
 | `backtest` | position sizers, portfolio sim, cost models — built *on* the compiler | ⏳ |
 
@@ -99,6 +127,8 @@ Five layers, imports only point downward:
 - [x] CPU reference backend (every feature ships a numpy oracle; parity tests)
 - [x] Common-subexpression elimination (commutative-aware, float-safe)
 - [x] Liveness analysis and dead-value elimination
+- [x] Numba parallel CPU backend — the graph compiles to one `@njit(parallel=True)`
+      kernel, `prange` over parameter sets
 - [ ] Operator fusion
 - [x] Linear-scan buffer allocation (property-tested: live values never share a buffer)
 - [ ] CUDA backend (numba) with coalesced `(T, F, P)` layout

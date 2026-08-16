@@ -11,7 +11,7 @@ so it recycles through the temp pool like anything else.
 
 Inputs, params and constants are never allocated - the caller provides them.
 """
-from kernelsmith.dsl import ValueNode , Graph , ValueSignature , DType , Op , Shape , VarRole
+from kernelsmith.dsl import ValueNode , Signature , DType , Op , Shape , VarRole , Graph
 from kernelsmith.ir import Liveness
 from kernelsmith.errors import KernelsmithError
 from enum import Enum
@@ -70,7 +70,7 @@ def _key(value : ValueNode , live : Liveness) -> PoolKey:
     return (kind , value.dtype , value.shape)
 
 
-def _scratch_key(signature : ValueSignature) -> PoolKey:
+def _scratch_key(signature : Signature) -> PoolKey:
     return (PoolKind.TEMP , signature.dtype , signature.shape)
 
 
@@ -113,3 +113,6 @@ def allocate(ops : List[Op] , live : Liveness) -> Allocation:
                 pools.release(slots[value])
 
     return Allocation(slots = slots , scratch = scratch , pool_size = pools.sizes())
+
+
+

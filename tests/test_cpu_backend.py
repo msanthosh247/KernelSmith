@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from kernelsmith import CallFactory, F4, Graph, GraphError, I4, SCAL, VEC
+from kernelsmith import CallFactory, F4, Graph, GraphError, I4
 from kernelsmith.backends.cpu import CpuBackend, cpu_impl
 from kernelsmith.features import rolling_min_max, sma
 
@@ -22,7 +22,7 @@ def rolling_mean_reference(values, period):
 def test_sma_matches_independent_reference():
     close = prices()
     g = Graph()
-    g.output("fast", sma(g.input("close"), g.int_param("n")))
+    g.register_output("fast", sma(g.register_input("close"), g.int_param("n")))
 
     result = CpuBackend().compile(g).run({"close": close}, {"n": [10]})["fast"][0]
     expected = rolling_mean_reference(close, 10)
@@ -35,10 +35,10 @@ def test_sma_matches_independent_reference():
 def test_crossover_strategy_end_to_end():
     close = prices()
     g = Graph()
-    c = g.input("close")
+    c = g.register_input("close")
     fast = sma(c, g.int_param("fast"))
     slow = sma(c, g.int_param("slow"))
-    g.output("signal", (fast > slow) & (c > slow))
+    g.register_output("signal", (fast > slow) & (c > slow))
 
     signal = CpuBackend().compile(g).run({"close": close}, {"fast": [5], "slow": [20]})["signal"][0]
 
@@ -52,7 +52,7 @@ def test_crossover_strategy_end_to_end():
 def test_parameter_sweep_stacks_along_first_axis():
     close = prices()
     g = Graph()
-    g.output("avg", sma(g.input("close"), g.int_param("n")))
+    g.register_output("avg", sma(g.register_input("close"), g.int_param("n")))
 
     out = CpuBackend().compile(g).run({"close": close}, {"n": [5, 10, 20]})["avg"]
     assert out.shape == (3, len(close))
@@ -63,7 +63,7 @@ def test_parameter_sweep_stacks_along_first_axis():
 def test_elementwise_with_constant_and_broadcast():
     close, opn = prices(60, 1), prices(60, 2)
     g = Graph()
-    g.output("med", (g.input("close") + g.input("open")) / 2)
+    g.register_output("med", (g.register_input("close") + g.register_input("open")) / 2)
 
     out = CpuBackend().compile(g).run({"close": close, "open": opn}, {})["med"]
     assert out.shape == (1, 60)
@@ -73,10 +73,10 @@ def test_elementwise_with_constant_and_broadcast():
 def test_comparison_operators_execute():
     a, b = prices(40, 4), prices(40, 5)
     g = Graph()
-    x, y = g.input("a"), g.input("b")
-    g.output("ne", x != y)
-    g.output("eq", x == y)
-    g.output("ge", x >= y)
+    x, y = g.register_input("a"), g.register_input("b")
+    g.register_output("ne", x != y)
+    g.register_output("eq", x == y)
+    g.register_output("ge", x >= y)
 
     out = CpuBackend().compile(g).run({"a": a, "b": b}, {})
     np.testing.assert_array_equal(out["ne"][0], a != b)
@@ -87,9 +87,9 @@ def test_comparison_operators_execute():
 def test_multi_output_feature():
     close = prices(50)
     g = Graph()
-    lo, hi = rolling_min_max(g.input("close"), g.int_param("n"))
-    g.output("low", lo)
-    g.output("high", hi)
+    lo, hi = rolling_min_max(g.register_input("close"), g.int_param("n"))
+    g.register_output("low", lo)
+    g.register_output("high", hi)
 
     out = CpuBackend().compile(g).run({"close": close}, {"n": [5]})
     assert (out["high"][0][4:] >= out["low"][0][4:]).all()
@@ -99,9 +99,9 @@ def test_multi_output_feature():
 def test_output_can_be_a_bare_input():
     close = prices(20)
     g = Graph()
-    c = g.input("close")
-    g.output("passthrough", c)
-    g.output("doubled", c * 2)
+    c = g.register_input("close")
+    g.register_output("passthrough", c)
+    g.register_output("doubled", c * 2)
 
     out = CpuBackend().compile(g).run({"close": close}, {})
     np.testing.assert_allclose(out["passthrough"][0], close)
@@ -110,23 +110,23 @@ def test_output_can_be_a_bare_input():
 # ---- error paths -----------------------------------------------------------
 
 def test_missing_implementation_fails_at_compile():
-    mystery = CallFactory("mystery", [VEC(F4), SCAL(I4)], [], [VEC(F4)])
+    mystery = CallFactory("mystery", [F4[:], I4], [], [F4[:]])
     g = Graph()
-    g.output("x", mystery(g.input("close"), g.int_param("n")))
+    g.register_output("x", mystery(g.register_input("close"), g.int_param("n")))
 
     with pytest.raises(GraphError, match="mystery"):
         CpuBackend().compile(g)
 
 
 def test_implementation_must_return_tuple():
-    bad = CallFactory("bad", [VEC(F4)], [], [VEC(F4)])
+    bad = CallFactory("bad", [F4[:]], [], [F4[:]])
 
     @cpu_impl(bad)
     def _bad(x):
         return x  # not a tuple
 
     g = Graph()
-    g.output("x", bad(g.input("close")))
+    g.register_output("x", bad(g.register_input("close")))
     program = CpuBackend().compile(g)
 
     with pytest.raises(GraphError, match="must return a tuple"):
@@ -134,15 +134,15 @@ def test_implementation_must_return_tuple():
 
 
 def test_wrong_output_count_is_caught():
-    stingy = CallFactory("stingy", [VEC(F4)], [], [VEC(F4), VEC(F4)])
+    stingy = CallFactory("stingy", [F4[:]], [], [F4[:], F4[:]])
 
     @cpu_impl(stingy)
     def _stingy(x):
         return (x,)  # signature declares two
 
     g = Graph()
-    a, _ = stingy(g.input("close"))
-    g.output("a", a)
+    a, _ = stingy(g.register_input("close"))
+    g.register_output("a", a)
 
     with pytest.raises(GraphError, match="returned 1 value"):
         CpuBackend().compile(g).run({"close": prices(10)}, {})
@@ -150,7 +150,7 @@ def test_wrong_output_count_is_caught():
 
 def test_missing_input_and_param_are_named():
     g = Graph()
-    g.output("avg", sma(g.input("close"), g.int_param("n")))
+    g.register_output("avg", sma(g.register_input("close"), g.int_param("n")))
     program = CpuBackend().compile(g)
 
     with pytest.raises(GraphError, match="missing input 'close'"):
@@ -161,8 +161,8 @@ def test_missing_input_and_param_are_named():
 
 def test_params_must_agree_in_length():
     g = Graph()
-    c = g.input("close")
-    g.output("x", sma(c, g.int_param("a")) > sma(c, g.int_param("b")))
+    c = g.register_input("close")
+    g.register_output("x", sma(c, g.int_param("a")) > sma(c, g.int_param("b")))
     program = CpuBackend().compile(g)
 
     with pytest.raises(GraphError, match="same length"):

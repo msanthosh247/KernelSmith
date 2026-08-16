@@ -2,15 +2,11 @@ from kernelsmith.dsl.types import (
     B1,
     CONST_OPERAND_TYPES,
     DType,
-    DTypeSignature,
     F4,
     I4,
-    SCAL,
     Shape,
-    ShapeSignature,
-    ValueSignature,
+    Signature,
     VarRole,
-    VEC,
     infer_dtype,
     promote_dtype,
     result_shape,
@@ -18,8 +14,7 @@ from kernelsmith.dsl.types import (
 from kernelsmith.dsl.graph import Call, CallFactory, Expr, Graph, Op, ValueNode
 
 __all__ = [
-    "B1", "CONST_OPERAND_TYPES", "Call", "CallFactory", "DType", "DTypeSignature",
-    "Expr", "F4", "Graph", "I4", "Op", "SCAL", "Shape", "ShapeSignature", "VEC",
-    "ValueNode", "ValueSignature", "VarRole", "infer_dtype", "promote_dtype",
-    "result_shape",
+    "B1", "CONST_OPERAND_TYPES", "Call", "CallFactory", "DType", "Expr", "F4",
+    "Graph", "I4", "Op", "Shape", "Signature", "ValueNode", "VarRole",
+    "infer_dtype", "promote_dtype", "result_shape",
 ]
