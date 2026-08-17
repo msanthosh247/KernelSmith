@@ -10,6 +10,7 @@ import numpy as np
 from kernelsmith import Graph
 from kernelsmith.backends.cpu import CpuBackend
 from kernelsmith.features import rolling_min_max, sma
+from kernelsmith.ir import cse, fuse
 
 # --- describe the strategy once -------------------------------------------
 g = Graph()
@@ -48,4 +49,19 @@ for i, (f, s) in enumerate(zip([5, 10, 20], [20, 50, 100])):
     print(f"  fast={f:>3} slow={s:>4}  ->  {results['signal'][i].sum():>4} long bars")
 
 # --- and look at it --------------------------------------------------------
-g.visualize(savepath=sys.argv[1] if len(sys.argv) > 1 else None)
+# visualize() defaults to the graph as written. Hand it a schedule from the
+# passes to see what the compiler actually decided to run: duplicates gone,
+# elementwise work collapsed into groups, intermediates no longer values at all.
+scheduled, replacements = cse(g.build())
+scheduled, levels = fuse(scheduled, g.outputs.values(), replacements)
+print(f"after fusion: {len(g.ops)} ops -> {len(scheduled)} ops")
+
+if len(sys.argv) > 1:
+    source_path = sys.argv[1]
+    compiled_path = source_path.replace(".png", "_compiled.png")
+    g.visualize(savepath=source_path)
+    g.visualize(savepath=compiled_path, ops=scheduled, op_levels=levels, replace=replacements)
+    print(f"wrote {source_path} and {compiled_path}")
+else:
+    g.visualize()
+    g.visualize(ops=scheduled, op_levels=levels, replace=replacements)

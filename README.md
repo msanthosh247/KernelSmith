@@ -70,9 +70,18 @@ pools:
 
 Eleven operations became seven. Three `sma(med, slow)` calls were written and two
 survive, because the duplicate was eliminated. Five elementwise operations became
-two `fused` groups, so their intermediates are registers rather than buffers - which
+two `fused` groups, so their intermediates are registers rather than buffers — which
 is why no `temp/bool` pool exists at all. What is left shares three float buffers,
 because a slot is recycled the moment a value's live interval ends.
+
+The same schedule as a picture — hand `visualize()` the ops from the passes rather
+than the graph as written, and the difference is what the compiler removed:
+
+![compiled schedule](assets/example_graph_compiled.png)
+
+Hexagons are fused groups, labelled with the expression they evaluate in one pass
+(`((a + b) / c)`); the intermediate values that used to sit between those operations
+are simply gone, because they are registers now.
 
 ## Performance
 
