@@ -3,6 +3,7 @@ import pytest
 
 pytest.importorskip("numba")
 
+import kernelsmith.backends.numba_cpu as numba_backend  # noqa: E402
 from kernelsmith import CallFactory, F4, Graph, GraphError, I4, KernelsmithError  # noqa: E402
 from kernelsmith.backends.cpu import CpuBackend  # noqa: E402
 from kernelsmith.backends.numba_cpu import (  # noqa: E402
@@ -117,6 +118,71 @@ def test_single_parameter_set():
     assert_parity(build, {"close": prices()}, {"n": 10})
 
 
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(lambda: _crossover_graph(), id="crossover"),
+        pytest.param(lambda: _two_consumer_graph(), id="two-consumers"),
+        pytest.param(lambda: _chain_graph(), id="long-chain"),
+        pytest.param(lambda: _output_feeding_expr_graph(), id="output-feeds-expr"),
+    ],
+)
+def test_fusion_does_not_change_results(build, monkeypatch):
+    """The acceptance test: fusing must be invisible in the results."""
+    close = prices()
+    inputs = {"close": close, "open": (close + 0.2).astype(np.float32)}
+    params = {"fast": [5, 10], "slow": [20, 30]}
+
+    fused = NumbaCPU_Backend().compile(build()).run(inputs, params)
+
+    monkeypatch.setattr(numba_backend, "fuse", lambda ops, outputs=(), replace=None: (ops, {}))
+    plain = NumbaCPU_Backend().compile(build()).run(inputs, params)
+
+    assert set(fused) == set(plain)
+    for name in fused:
+        np.testing.assert_array_equal(
+            np.asarray(fused[name]), np.asarray(plain[name]),
+            err_msg=f"output '{name}' changed under fusion",
+        )
+
+
+def _crossover_graph():
+    g = Graph()
+    close, opn = g.register_input("close"), g.register_input("open")
+    fast, slow = g.int_param("fast"), g.int_param("slow")
+    med = (close + opn) / 2
+    g.register_output("signal", (sma(med, fast) > sma(med, slow)) & (close > sma(med, slow)))
+    return g
+
+
+def _two_consumer_graph():
+    g = Graph()
+    close, opn = g.register_input("close"), g.register_input("open")
+    g.int_param("fast"), g.int_param("slow")
+    shared = close + opn
+    g.register_output("doubled", shared * 2)
+    g.register_output("tripled", shared * 3)
+    return g
+
+
+def _chain_graph():
+    g = Graph()
+    close, opn = g.register_input("close"), g.register_input("open")
+    g.int_param("fast"), g.int_param("slow")
+    g.register_output("chain", ((((close + opn) / 2) * 3) - 1) > close)
+    return g
+
+
+def _output_feeding_expr_graph():
+    g = Graph()
+    close, opn = g.register_input("close"), g.register_input("open")
+    g.int_param("fast"), g.int_param("slow")
+    med = (close + opn) / 2
+    g.register_output("med", med)          # registered AND consumed below
+    g.register_output("flag", med > close)
+    return g
+
+
 def test_repeated_runs_reuse_scratch_without_corrupting_results():
     g = Graph()
     close, n = g.register_input("close"), g.int_param("n")
@@ -170,7 +236,9 @@ def test_source_shape():
     assert "@njit(parallel=True, cache=False)" in source
     assert "for p in prange(n_params):" in source
     assert "sma_numba_cpu(" in source              # kernels called by derived name
-    assert source.count("for t in range(n_bars):") == 3   # +, /, >
+    # two loops, not three: '+' and '/' fuse, and the sma between them and '>'
+    # forces a second group
+    assert source.count("for t in range(n_bars):") == 2
     assert "n_params, n_bars):" in source          # counts passed, never inferred
 
 

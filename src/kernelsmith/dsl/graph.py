@@ -321,19 +321,41 @@ class Graph:
 
         return self.ops
 
-    def visualize(self, savepath: Optional[str] = None, figsize=None):
+    def visualize(
+        self,
+        savepath: Optional[str] = None,
+        figsize=None,
+        ops: Optional[List[Op]] = None,
+        op_levels: Optional[dict] = None,
+        replace: Optional[dict] = None,
+    ):
         """Layered plot of the call graph.
 
         Circles = ValueNodes (colored by role), squares = feature Calls,
-        diamonds = Exprs, red outline = registered outputs. Requires the
-        optional viz dependencies (networkx, matplotlib).
+        diamonds = Exprs, hexagons = fused expression groups, red outline =
+        registered outputs. Requires the optional viz dependencies (networkx,
+        matplotlib).
+
+        Pass ``ops`` and ``op_levels`` from a pass to plot a transformed
+        schedule - fusing first and plotting both is the clearest picture of
+        what fusion did, since values that became locals stop being nodes.
+        Pass ``replace`` too when the schedule has been through CSE, or
+        arguments naming a dropped duplicate will float free of the graph.
         """
         import networkx as nx
         import matplotlib.pyplot as plt
         from matplotlib.lines import Line2D
 
+        # deferred: ir imports dsl, so this cannot be a module-level import
+        from kernelsmith.ir.fuse import FusedExpr
+
         if not self.ops:
             self.build()
+        if ops is None:
+            ops, op_levels = self.ops, self.op_levels
+        elif op_levels is None:
+            raise GraphError("pass op_levels alongside ops - the layout is laid out by level")
+        replace = replace or {}
 
         _dt = {DType.FLOAT32: "f32", DType.INT32: "i32", DType.BOOL: "b1"}
 
@@ -349,23 +371,38 @@ class Graph:
         G = nx.DiGraph()
         labels = {}
 
+        # a fused group produces its members' values as locals, so those values
+        # belong to the group rather than to the member that wrote them
+        produced_by = {}
+        for op in ops:
+            for value in (op.produced if isinstance(op, FusedExpr) else op.outs):
+                produced_by[value] = op
+
         def _add_value(v: ValueNode):
             if id(v) not in G:
-                layer = 0 if v.parent is None else 2 * self.op_levels[v.parent] + 2
+                source = produced_by.get(v)
+                layer = 0 if source is None else 2 * op_levels[source] + 2
                 G.add_node(id(v), obj=v, kind="value", layer=layer)
                 labels[id(v)] = _value_label(v)
 
-        for op in self.ops:
+        for op in ops:
             # the one place the operation kind genuinely matters: node shape
-            G.add_node(
-                id(op),
-                obj=op,
-                kind="call" if isinstance(op, Call) else "expr",
-                layer=2 * self.op_levels[op] + 1,
-            )
-            labels[id(op)] = op.name
+            if isinstance(op, Call):
+                kind = "call"
+            elif isinstance(op, FusedExpr):
+                kind = "fused"
+            else:
+                kind = "expr"
+            G.add_node(id(op), obj=op, kind=kind, layer=2 * op_levels[op] + 1)
+            label = op.name
+            if isinstance(op, FusedExpr):
+                formula = op.formula()
+                if formula is not None:
+                    label = f"{op.name}\n{formula}"
+            labels[id(op)] = label
 
             for arg in op.args:
+                arg = replace.get(arg, arg)
                 _add_value(arg)
                 G.add_edge(id(arg), id(op))
 
@@ -413,6 +450,13 @@ class Graph:
                 node_size=2000, edgecolors="#444444", linewidths=1.0,
             )
 
+        fused_ids = [n for n, d in G.nodes(data=True) if d["kind"] == "fused"]
+        if fused_ids:
+            nx.draw_networkx_nodes(
+                G, pos, nodelist=fused_ids, node_shape="h", node_color="#8fd4d0",
+                node_size=2200, edgecolors="#444444", linewidths=1.0,
+            )
+
         nx.draw_networkx_edges(G, pos, edge_color="#888888", arrows=True, arrowsize=14, node_size=1500)
         nx.draw_networkx_labels(G, pos, labels, font_size=8)
 
@@ -426,6 +470,8 @@ class Graph:
                    markeredgecolor="#444444", markersize=10, label="Expr"),
             Line2D([], [], marker="s", color="w", markerfacecolor="#f2b06b",
                    markeredgecolor="#444444", markersize=11, label="Call (feature)"),
+            Line2D([], [], marker="h", color="w", markerfacecolor="#8fd4d0",
+                   markeredgecolor="#444444", markersize=12, label="Fused group"),
             Line2D([], [], marker="o", color="w", markerfacecolor="w",
                    markeredgecolor="#c0392b", markersize=11, label="registered output"),
         ]

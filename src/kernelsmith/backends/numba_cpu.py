@@ -26,6 +26,7 @@ from kernelsmith.backends.binding import Binding, bind
 from kernelsmith.dsl import Call, DType, Expr, Graph, Op, Shape, Signature, ValueNode, VarRole
 from kernelsmith.errors import GraphError, KernelsmithError
 from kernelsmith.ir import Allocation, Liveness, PoolKind, allocate, cse
+from kernelsmith.ir.fuse import FusedExpr, fuse
 
 NUMBA_CPU_FN_REGISTER: Dict[object, "NumbaCPU_FPointer"] = {}
 
@@ -222,6 +223,28 @@ def code_gen(
             lines.append(f"        {pointer.func_name}({', '.join(call_args)})")
             continue
 
+        if isinstance(op, FusedExpr):
+            # one loop for the whole group; every value produced inside it is a
+            # local, so only the root reaches a buffer
+            lines.append("        for t in range(n_bars):")
+            names: Dict[ValueNode, str] = {}
+            for index, member in enumerate(op.members):
+                operands = []
+                for operand in member.args:
+                    operand = replace.get(operand, operand)
+                    operands.append(
+                        names[operand] if operand in names
+                        else _reference(operand, allocation, binding, "t")
+                    )
+                produced = member.outs[0]
+                if member is op.root:
+                    destination = _reference(produced, allocation, binding, "t")
+                else:
+                    destination = f"_v{index}"
+                    names[produced] = destination
+                lines.append(f"            {destination} = {_expression(member, operands)}")
+            continue
+
         target = op.outs[0]
         if target.shape is Shape.SCALAR:
             operands = [_reference(replace.get(a, a), allocation, binding) for a in op.args]
@@ -342,6 +365,9 @@ class NumbaCPU_Backend(Backend):
     def compile(self, graph: Graph, verbose: bool = False) -> NumbaProgram:
         ops = graph.build()
         ops, replace = cse(ops)
+        # fuse before liveness: values that became locals never appear in an
+        # op's args or outs again, so they are never given a buffer
+        ops, _levels = fuse(ops, graph.outputs.values(), replace)
         live = Liveness(ops, graph.outputs, replace)
         allocation = allocate(ops, live)
         binding = bind(graph)

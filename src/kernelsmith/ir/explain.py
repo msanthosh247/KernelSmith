@@ -9,6 +9,7 @@ from typing import List
 from kernelsmith.dsl import Call, DType, Graph, Op, Shape, Signature, ValueNode
 from kernelsmith.ir.allocate import Allocation, Slot, allocate
 from kernelsmith.ir.cse import cse
+from kernelsmith.ir.fuse import FusedExpr, fuse
 from kernelsmith.ir.liveness import Liveness
 
 _DTYPE_TAG = {DType.FLOAT32: "f32", DType.INT32: "i32", DType.BOOL: "b1"}
@@ -34,7 +35,14 @@ def _scratch_tag(signature: Signature, slot: Slot) -> str:
 
 
 
-def explain(graph: Graph, ops: List[Op], live: Liveness, allocation: Allocation) -> str:
+def explain(
+    graph: Graph,
+    ops: List[Op],
+    live: Liveness,
+    allocation: Allocation,
+    levels: dict = None,
+) -> str:
+    levels = graph.op_levels if levels is None else levels
     def _row(*cells) -> str:
         return "".join(str(cell).ljust(width) for cell, width in zip(cells, _WIDTHS)).rstrip()
 
@@ -55,15 +63,14 @@ def explain(graph: Graph, ops: List[Op], live: Liveness, allocation: Allocation)
             _scratch_tag(signature, slot)
             for signature, slot in zip(op.buffer_signature, allocation.scratch.get(op, ()))
         )
+        if isinstance(op, Call):
+            kind = "call"
+        elif isinstance(op, FusedExpr):
+            kind = "fused"
+        else:
+            kind = "expr"
         lines.append(
-            _row(
-                i,
-                graph.op_levels.get(op, "?"),
-                "call" if isinstance(op, Call) else "expr",
-                op.name,
-                outs or "-",
-                scratch or "-",
-            )
+            _row(i, levels.get(op, "?"), kind, op.name, outs or "-", scratch or "-")
         )
 
     lines += ["", "pools:"]
@@ -77,8 +84,11 @@ def explain(graph: Graph, ops: List[Op], live: Liveness, allocation: Allocation)
     return "\n".join(lines)
 
 
-def explain_graph(graph: Graph) -> str:
+def explain_graph(graph: Graph, fused: bool = True) -> str:
     """Run the whole pipeline and describe the result."""
     ops, replace = cse(graph.build())
+    levels = graph.op_levels
+    if fused:
+        ops, levels = fuse(ops, graph.outputs.values(), replace)
     live = Liveness(ops, graph.outputs, replace)
-    return explain(graph, ops, live, allocate(ops, live))
+    return explain(graph, ops, live, allocate(ops, live), levels)

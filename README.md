@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/msanthosh247/KernelSmith/actions/workflows/ci.yml/badge.svg)](https://github.com/msanthosh247/KernelSmith/actions/workflows/ci.yml)
 
-**Status: early development.** Phase 1 — the graph DSL and scheduling core — is under active work. The compiler passes and backends land next; the roadmap below is honest about what exists today.
+**Status: early development.** The DSL, the optimizer, and a parallel CPU backend work end to end — a graph compiles to code within 5% of the same strategy written by hand. The CUDA backend is next; the roadmap below is honest about what exists today.
 
 ## What it is
 
@@ -50,33 +50,29 @@ dependency level, which buffer every result lives in, borrowed scratch, and valu
 that are computed but never read:
 
 ```
-10 ops   2 input(s)   2 param(s)   3 output(s)
+7 ops   2 input(s)   2 param(s)   3 output(s)
 
 op  lvl  kind  name              outs                          scratch
 --- ---- ----- ----------------- ----------------------------- -------------
-0   0    expr  +                 T:f32v[0]                     -
-1   1    expr  /                 T:f32v[1]                     -
-2   2    call  stoch             O:f32v[0]                     f32v[0] f32v[2]
-3   0    call  rolling_min_max   T:f32v[2] T:f32v[0]*          -
-4   1    expr  -                 O:f32v[1]                     -
-5   2    call  sma               T:f32v[2]                     -
-6   3    expr  >                 T:b1v[0]                      -
-7   2    call  sma               T:f32v[0]                     -
-8   3    expr  >                 T:b1v[1]                      -
-9   4    expr  &                 O:b1v[0]                      -
+0   0    fused fused[2]          T:f32v[0]                     -
+1   1    call  stoch             O:f32v[0]                     f32v[1] f32v[2]
+2   0    call  rolling_min_max   T:f32v[2] T:f32v[1]           -
+3   1    expr  -                 O:f32v[1]                     -
+4   1    call  sma               T:f32v[2]                     -
+5   1    call  sma               T:f32v[1]                     -
+6   2    fused fused[3]          O:b1v[0]                      -
 
 pools:
   output/bool/vector  x1
   output/float32/vector  x2
-  temp/bool/vector  x2
   temp/float32/vector  x3
-
-* produced but never read - scratch space, never copied back
 ```
 
-Three `sma(med, slow)` calls were written; two survive, because the duplicate was
-eliminated. Ten values share five temp buffers, because slots are recycled the
-moment a value's live interval ends.
+Eleven operations became seven. Three `sma(med, slow)` calls were written and two
+survive, because the duplicate was eliminated. Five elementwise operations became
+two `fused` groups, so their intermediates are registers rather than buffers - which
+is why no `temp/bool` pool exists at all. What is left shares three float buffers,
+because a slot is recycled the moment a value's live interval ends.
 
 ## Performance
 
@@ -86,14 +82,15 @@ The Numba CPU backend compiles a graph into one `@njit(parallel=True)` kernel,
 
 | | time | |
 |---|---|---|
-| numpy reference interpreter | 409 ms | the correctness oracle, not a fast path |
-| hand-written njit, fused | 18.3 ms | |
-| hand-written njit, *same structure as generated* | 21.1 ms | |
-| **kernelsmith** | **20.8 ms** | 18× the interpreter, 1.14× hand-written |
+| numpy reference interpreter | 413 ms | the correctness oracle, not a fast path |
+| hand-written njit, hand-fused | 18.9 ms | |
+| **kernelsmith** | **19.9 ms** | 21× the interpreter, **1.05× hand-written** |
 
-Generated code matches hand-written code doing the same work — the residual gap is
-one missing optimization, not codegen quality: kernelsmith currently emits five
-elementwise passes where the fused version does two. Operator fusion is next.
+Within 5% of code written by hand, because the compiler does by itself what a
+careful person does by hand: common subexpressions collapse, elementwise
+operations that can share a loop are fused into one, and what is left gets
+buffers recycled by live range. Fusion alone was worth 2.4 ms of that — it
+removes three full passes over `P × T` arrays.
 
 `--threads` shows why that matters. The workload is memory-bandwidth-bound, so
 parallelism saturates long before the core count:
@@ -113,7 +110,7 @@ Five layers, imports only point downward:
 | Layer | Contents | Status |
 |---|---|---|
 | `dsl` | typed value nodes, operator overloading, call factories, `Graph` | ✅ working |
-| `ir` | passes: topological scheduling ✅, CSE ✅, liveness ✅, buffer allocation ✅, fusion | 🔨 in progress |
+| `ir` | passes: topological scheduling ✅, CSE ✅, fusion ✅, liveness ✅, buffer allocation ✅ | ✅ working |
 | `backends` | CPU reference (test oracle) ✅, Numba parallel CPU ✅, CUDA, Triton | 🔨 in progress |
 | `runtime` | memory planner, sessions, kernel cache | ⏳ |
 | `backtest` | position sizers, portfolio sim, cost models — built *on* the compiler | ⏳ |
@@ -129,10 +126,11 @@ Five layers, imports only point downward:
 - [x] Liveness analysis and dead-value elimination
 - [x] Numba parallel CPU backend — the graph compiles to one `@njit(parallel=True)`
       kernel, `prange` over parameter sets
-- [ ] Operator fusion
+- [x] Operator fusion — elementwise groups share one loop; intermediates become
+      registers instead of buffers
 - [x] Linear-scan buffer allocation (property-tested: live values never share a buffer)
+- [x] Benchmarks against hand-written njit, with a thread-scaling curve
 - [ ] CUDA backend (numba) with coalesced `(T, F, P)` layout
-- [ ] Benchmarks vs. multiprocessing CPU baseline
 - [ ] Triton backend
 
 ## Provenance
