@@ -19,8 +19,11 @@ Homepage = "https://github.com/msanthosh247/KernelSmith"
 [project.optional-dependencies]
 viz = ["networkx>=3.0", "matplotlib>=3.7"]
 numba = ["numba>=0.59"]
-cuda = ["numba>=0.59", "numba-cuda>=0.30"]
-dev = ["pytest>=8", "networkx>=3.0", "matplotlib>=3.7", "numba>=0.59", "numba-cuda>=0.30"]
+# numpy<2.5: numba-cuda (0.30.4) registers an overload for np.row_stack, which
+# numpy 2.5 removed, so every CUDA compile fails under it. Lift once numba-cuda
+# supports numpy 2.5.
+cuda = ["numba>=0.59", "numba-cuda>=0.30", "numpy<2.5"]
+dev = ["pytest>=8", "networkx>=3.0", "matplotlib>=3.7", "numba>=0.59", "numba-cuda>=0.30", "numpy<2.5"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

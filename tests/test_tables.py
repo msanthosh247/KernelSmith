@@ -33,12 +33,12 @@ def _cycle_kernel(table, scale, out):
 
 
 def _register_cycle_kernels():
-    import importlib.util
     from numba import njit
+    from kernelsmith.availability import cuda_importable
     from kernelsmith.backends.numba_cpu import NUMBA_CPU, register_numba_cpu
     if cycle not in NUMBA_CPU.entries:
         register_numba_cpu(cycle)(njit(_cycle_kernel))
-    if importlib.util.find_spec("numba_cuda") is not None:
+    if cuda_importable():
         from numba import cuda
         from kernelsmith.backends.cuda import CUDA, register_cuda
         if cycle not in CUDA.entries:

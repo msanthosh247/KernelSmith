@@ -24,6 +24,6 @@ jobs:
       # ...and run here, under numba's CUDA simulator. The simulator has to be
       # switched on before numba.cuda is first imported, hence its own process.
       - name: CUDA backend (simulated)
-        run: pytest tests/test_cuda.py tests/test_indicators.py tests/test_sort_by.py tests/test_tables.py tests/test_bootstrap.py -q
+        run: pytest tests/test_cuda.py tests/test_indicators.py tests/test_sort_by.py tests/test_tables.py tests/test_bootstrap.py tests/test_readme.py -q
         env:
           NUMBA_ENABLE_CUDASIM: "1"

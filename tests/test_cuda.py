@@ -12,11 +12,14 @@ import re
 import numpy as np
 import pytest
 
-pytest.importorskip("numba_cuda")
-from numba import cuda  # noqa: E402
+from kernelsmith.availability import cuda_unavailable_reason, cuda_usable  # noqa: E402
 
-if not cuda.is_available():
-    pytest.skip("no CUDA device and the simulator is not enabled", allow_module_level=True)
+# numba-cuda can be installed yet unimportable (no CUDA runtime): ask the import
+if not cuda_usable():
+    pytest.skip(f"no CUDA device and the simulator is not enabled"
+                f" ({cuda_unavailable_reason or 'no device'})", allow_module_level=True)
+
+from numba import cuda  # noqa: E402
 
 import kernelsmith.backends.generated as generated  # noqa: E402
 from kernelsmith import CallFactory, F4, Graph, I4, KernelsmithError  # noqa: E402

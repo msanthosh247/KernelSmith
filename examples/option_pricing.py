@@ -234,11 +234,10 @@ def plot(table, spot, history, out_dir=HERE):
 def available_backends(choice):
     from kernelsmith.backends.numba_cpu import NumbaCPU_Backend
     backends = {"numba": NumbaCPU_Backend}
-    if importlib.util.find_spec("numba_cuda") is not None:
-        from numba import cuda
-        if cuda.is_available():
-            from kernelsmith.backends.cuda import CudaBackend
-            backends["cuda"] = CudaBackend
+    from kernelsmith.availability import cuda_usable
+    if cuda_usable():
+        from kernelsmith.backends.cuda import CudaBackend
+        backends["cuda"] = CudaBackend
     if choice == "cpu":
         from kernelsmith.backends.cpu import CPUBackend
         return {"cpu": CPUBackend}

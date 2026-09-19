@@ -37,6 +37,11 @@ def test_every_python_block_runs(built):
 
 
 def test_generated_sections_are_current(built):
+    from kernelsmith.availability import cuda_importable, cuda_unavailable_reason
+    if not cuda_importable():
+        # the README shows the emitted CUDA kernel; emitting it needs numba.cuda.
+        # CI checks this under the simulator, where numba.cuda always imports.
+        pytest.skip(f"cannot emit the CUDA section here: {cuda_unavailable_reason}")
     generator, text, namespace = built
     assert generator.render(text, namespace) == text, "README is stale: run python scripts/readme.py"
 

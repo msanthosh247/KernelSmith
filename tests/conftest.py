@@ -1,5 +1,4 @@
 import importlib.util
-import warnings
 
 import pytest
 
@@ -14,14 +13,10 @@ def _generating_backends():
     from kernelsmith.backends.numba_cpu import NumbaCPU_Backend
     backends.append(pytest.param(NumbaCPU_Backend, id="numba"))
 
-    if importlib.util.find_spec("numba_cuda") is not None:
-        from numba import cuda
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            available = cuda.is_available()
-        if available:
-            from kernelsmith.backends.cuda import CudaBackend
-            backends.append(pytest.param(CudaBackend, id="cuda"))
+    from kernelsmith.availability import cuda_usable
+    if cuda_usable():
+        from kernelsmith.backends.cuda import CudaBackend
+        backends.append(pytest.param(CudaBackend, id="cuda"))
     return backends
 
 
