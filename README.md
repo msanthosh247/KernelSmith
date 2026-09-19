@@ -312,10 +312,6 @@ Five layers, imports only point downward:
 - [ ] Reductions across parameter sets inside the graph (today they run in numpy after `run()`)
 - [ ] Triton backend
 
-## Provenance
-
-This is a from-scratch redesign ("v2") of a CUDA backtesting compiler I built professionally at a proprietary trading firm, where v1 remains in production. v2 is a clean reimplementation that fixes v1's design mistakes — uncoalesced memory layout, codegen coupled to backtesting semantics, manual output-index bookkeeping. Example strategies in this repo are deliberately naive: the project is the compiler, not the alpha.
-
 ## Development
 
 ```bash
