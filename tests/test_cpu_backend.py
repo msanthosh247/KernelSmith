@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from kernelsmith import CallFactory, F4, Graph, GraphError, I4
-from kernelsmith.backends.cpu import CpuBackend, cpu_impl
+from kernelsmith.backends.cpu import CPUBackend, cpu_impl
 from kernelsmith.features import rolling_min_max, sma
 
 
@@ -24,7 +24,7 @@ def test_sma_matches_independent_reference():
     g = Graph()
     g.register_output("fast", sma(g.register_input("close"), g.int_param("n")))
 
-    result = CpuBackend().compile(g).run({"close": close}, {"n": [10]})["fast"][0]
+    result = CPUBackend().compile(g).run({"close": close}, {"n": [10]})["fast"][0]
     expected = rolling_mean_reference(close, 10)
 
     valid = ~np.isnan(expected)
@@ -40,7 +40,7 @@ def test_crossover_strategy_end_to_end():
     slow = sma(c, g.int_param("slow"))
     g.register_output("signal", (fast > slow) & (c > slow))
 
-    signal = CpuBackend().compile(g).run({"close": close}, {"fast": [5], "slow": [20]})["signal"][0]
+    signal = CPUBackend().compile(g).run({"close": close}, {"fast": [5], "slow": [20]})["signal"][0]
 
     f = rolling_mean_reference(close, 5)
     s = rolling_mean_reference(close, 20)
@@ -54,7 +54,7 @@ def test_parameter_sweep_stacks_along_first_axis():
     g = Graph()
     g.register_output("avg", sma(g.register_input("close"), g.int_param("n")))
 
-    out = CpuBackend().compile(g).run({"close": close}, {"n": [5, 10, 20]})["avg"]
+    out = CPUBackend().compile(g).run({"close": close}, {"n": [5, 10, 20]})["avg"]
     assert out.shape == (3, len(close))
     # longer windows warm up later
     assert np.isnan(out[0]).sum() < np.isnan(out[2]).sum()
@@ -65,7 +65,7 @@ def test_elementwise_with_constant_and_broadcast():
     g = Graph()
     g.register_output("med", (g.register_input("close") + g.register_input("open")) / 2)
 
-    out = CpuBackend().compile(g).run({"close": close, "open": opn}, {})["med"]
+    out = CPUBackend().compile(g).run({"close": close, "open": opn}, {})["med"]
     assert out.shape == (1, 60)
     np.testing.assert_allclose(out[0], (close + opn) / 2, rtol=1e-6)
 
@@ -78,7 +78,7 @@ def test_comparison_operators_execute():
     g.register_output("eq", x == y)
     g.register_output("ge", x >= y)
 
-    out = CpuBackend().compile(g).run({"a": a, "b": b}, {})
+    out = CPUBackend().compile(g).run({"a": a, "b": b}, {})
     np.testing.assert_array_equal(out["ne"][0], a != b)
     np.testing.assert_array_equal(out["eq"][0], a == b)
     np.testing.assert_array_equal(out["ge"][0], a >= b)
@@ -91,7 +91,7 @@ def test_multi_output_feature():
     g.register_output("low", lo)
     g.register_output("high", hi)
 
-    out = CpuBackend().compile(g).run({"close": close}, {"n": [5]})
+    out = CPUBackend().compile(g).run({"close": close}, {"n": [5]})
     assert (out["high"][0][4:] >= out["low"][0][4:]).all()
     np.testing.assert_allclose(out["high"][0][4], close[:5].max(), rtol=1e-6)
 
@@ -103,7 +103,7 @@ def test_output_can_be_a_bare_input():
     g.register_output("passthrough", c)
     g.register_output("doubled", c * 2)
 
-    out = CpuBackend().compile(g).run({"close": close}, {})
+    out = CPUBackend().compile(g).run({"close": close}, {})
     np.testing.assert_allclose(out["passthrough"][0], close)
 
 
@@ -115,7 +115,7 @@ def test_missing_implementation_fails_at_compile():
     g.register_output("x", mystery(g.register_input("close"), g.int_param("n")))
 
     with pytest.raises(GraphError, match="mystery"):
-        CpuBackend().compile(g)
+        CPUBackend().compile(g)
 
 
 def test_implementation_must_return_tuple():
@@ -127,7 +127,7 @@ def test_implementation_must_return_tuple():
 
     g = Graph()
     g.register_output("x", bad(g.register_input("close")))
-    program = CpuBackend().compile(g)
+    program = CPUBackend().compile(g)
 
     with pytest.raises(GraphError, match="must return a tuple"):
         program.run({"close": prices(10)}, {})
@@ -145,13 +145,13 @@ def test_wrong_output_count_is_caught():
     g.register_output("a", a)
 
     with pytest.raises(GraphError, match="returned 1 value"):
-        CpuBackend().compile(g).run({"close": prices(10)}, {})
+        CPUBackend().compile(g).run({"close": prices(10)}, {})
 
 
 def test_missing_input_and_param_are_named():
     g = Graph()
     g.register_output("avg", sma(g.register_input("close"), g.int_param("n")))
-    program = CpuBackend().compile(g)
+    program = CPUBackend().compile(g)
 
     with pytest.raises(GraphError, match="missing input 'close'"):
         program.run({}, {"n": [5]})
@@ -163,7 +163,7 @@ def test_params_must_agree_in_length():
     g = Graph()
     c = g.register_input("close")
     g.register_output("x", sma(c, g.int_param("a")) > sma(c, g.int_param("b")))
-    program = CpuBackend().compile(g)
+    program = CPUBackend().compile(g)
 
     with pytest.raises(GraphError, match="same length"):
         program.run({"close": prices(30)}, {"a": [5, 10], "b": [20]})

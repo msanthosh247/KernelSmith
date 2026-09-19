@@ -1,6 +1,6 @@
 import pytest
 
-from kernelsmith import Graph, Shape
+from kernelsmith import Graph, Shape, VarRole
 from kernelsmith.features import rolling_min_max, sma
 from kernelsmith.ir.cse import cse
 from kernelsmith.ir.fuse import FusedExpr, consumers, fuse
@@ -212,6 +212,21 @@ def test_consumer_map_resolves_through_cse():
     for value, readers in reads.items():
         assert value not in replace                   # every key is canonical
         assert len(readers) == len(set(id(r) for r in readers))
+
+
+def test_group_args_resolve_through_cse():
+    """(c + 1) * (c + 1): CSE keeps one '+', but the '*' still names both nodes.
+    The dropped one must not leak out as an external operand - it has no buffer."""
+    g = Graph()
+    c = g.register_input("c")
+    g.register_output("out", (c + 1) * (c + 1))
+
+    ops, fused, _, replace = plan(g)
+    (group,) = groups(fused)
+    assert all(arg not in replace for arg in group.args)
+    assert [arg.name for arg in group.args if arg.role is VarRole.INPUT] == ["c"]
+    assert group.formula() == "((a + b) * (a + b))"
+    allocate(fused, Liveness(fused, g.outputs, replace))      # used to KeyError
 
 
 def test_fusion_is_deterministic():

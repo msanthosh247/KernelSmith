@@ -8,7 +8,7 @@ import sys
 import numpy as np
 
 from kernelsmith import Graph
-from kernelsmith.backends.cpu import CpuBackend
+from kernelsmith.backends.cpu import CPUBackend
 from kernelsmith.features import rolling_min_max, sma
 from kernelsmith.ir import cse, fuse
 
@@ -36,7 +36,7 @@ bars = 250
 close_prices = (np.cumsum(rng.normal(0, 1, bars)) + 100.0).astype(np.float32)
 open_prices = (close_prices + rng.normal(0, 0.2, bars)).astype(np.float32)
 
-program = CpuBackend().compile(g)
+program = CPUBackend().compile(g)
 print(f"after CSE: {len(g.ops)} ops -> {len(program.ops)} ops")
 
 results = program.run(

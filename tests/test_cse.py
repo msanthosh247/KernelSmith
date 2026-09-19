@@ -3,7 +3,7 @@ import pytest
 
 import kernelsmith.backends.cpu as cpu_backend
 from kernelsmith import CallFactory, F4, Graph, I4
-from kernelsmith.backends.cpu import CpuBackend, cpu_impl
+from kernelsmith.backends.cpu import CPUBackend, cpu_impl
 from kernelsmith.features import rolling_min_max, sma
 from kernelsmith.ir import cse
 
@@ -156,10 +156,10 @@ def test_cse_does_not_change_results(monkeypatch):
     inputs = {"close": close, "open": opn}
     params = {"fast": [5, 10], "slow": [20, 30]}
 
-    with_cse = CpuBackend().compile(build_graph()).run(inputs, params)
+    with_cse = CPUBackend().compile(build_graph()).run(inputs, params)
 
     monkeypatch.setattr(cpu_backend, "cse", lambda ops: (ops, {}))
-    without_cse = CpuBackend().compile(build_graph()).run(inputs, params)
+    without_cse = CPUBackend().compile(build_graph()).run(inputs, params)
 
     assert set(with_cse) == set(without_cse)
     for name in with_cse:
@@ -173,6 +173,6 @@ def test_compiled_program_uses_fewer_ops(monkeypatch):
     n = g.int_param("n")
     g.register_output("x", sma(close, n) > sma(close, n))
 
-    assert len(CpuBackend().compile(g).ops) == 2      # one sma, one '>'
+    assert len(CPUBackend().compile(g).ops) == 2      # one sma, one '>'
     monkeypatch.setattr(cpu_backend, "cse", lambda ops: (ops, {}))
-    assert len(CpuBackend().compile(g).ops) == 3
+    assert len(CPUBackend().compile(g).ops) == 3

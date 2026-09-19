@@ -20,9 +20,7 @@ from kernelsmith.dsl.types import (
     Shape,
     Signature,
     VarRole,
-    infer_dtype,
-    promote_dtype,
-    result_shape,
+    result_dtype,
 )
 
 
@@ -57,7 +55,7 @@ class ValueNode:
         if isinstance(other, ValueNode):
             return other
         if isinstance(other, CONST_OPERAND_TYPES):
-            return ValueNode(infer_dtype(other), Shape.SCALAR, VarRole.CONST, val=other)
+            return ValueNode(DType.infer_from_constant(other), Shape.SCALAR, VarRole.CONST, val=other)
         raise DslTypeError(f"invalid operand of type {type(other).__name__}")
 
     def _binary_op(self, other, operation: str, self_at_right: bool = False) -> "ValueNode":
@@ -87,6 +85,24 @@ class ValueNode:
     def __ne__(self , other): return self._binary_op(other , "!=")
     def __neg__(self): return self._unary_op("neg")
     def __invert__(self): return self._unary_op("~")
+
+    def __getitem__(self, index) -> "ValueNode":
+        """``series[i]``: element ``i`` of this series, one value per parameter set.
+
+        ``i`` is an int or an int param; negative counts from the end, and an
+        index past either end gives NaN. It is how a simulated path is read at
+        an expiry: ``path[20]`` is the value after 21 steps.
+        """
+        if self.shape is not Shape.VECTOR:
+            raise DslTypeError(
+                f"only a series can be indexed; {self._describe()} is a {self.shape.value}"
+            )
+        if self.dtype is not DType.FLOAT32:
+            raise DslTypeError(f"indexing supports float32 series, got {self.dtype.value}")
+        return element(self, index)
+
+    def _describe(self) -> str:
+        return f"'{self.name}'" if self.name else "this value"
 
     # defining __eq__ would otherwise set __hash__ to None;
     # identity hash keeps nodes usable as dict keys in the passes
@@ -139,15 +155,22 @@ class Expr(Op):
     """
 
     def __init__(self, operation: str, left: ValueNode, right: Optional[ValueNode]):
+        for operand in (left, right):
+            if operand is not None and operand.shape is Shape.TABLE:
+                raise DslTypeError(
+                    f"{operand._describe()} is a table (reference data): it can only be passed"
+                    " to features such as bootstrap_path. To compute on it bar by bar,"
+                    " register it with register_input."
+                )
         self.name = operation
         self.left = left
         self.right = right
         self.args = (left,) if right is None else (left, right)
 
-        dtype = promote_dtype(
+        dtype = result_dtype(
             left.dtype, right.dtype if right is not None else None, operation
         )
-        shape = result_shape(left.shape, right.shape if right is not None else None)
+        shape = left.shape.combine(right.shape if right is not None else None)
         self.outs = (ValueNode(dtype, shape, VarRole.TEMP, parent=self),)
 
     @property
@@ -202,11 +225,18 @@ class CallFactory:
         for i, (sig, inp) in enumerate(zip(self.input_signature, inputs)):
             if not isinstance(inp, ValueNode):
                 if isinstance(inp, CONST_OPERAND_TYPES):
-                    inp = ValueNode(infer_dtype(inp), Shape.SCALAR, VarRole.CONST, val=inp)
+                    inp = ValueNode(DType.infer_from_constant(inp), Shape.SCALAR, VarRole.CONST, val=inp)
                 else:
                     raise DslTypeError(
                         f"'{self.func_name}' argument {i}: expected a ValueNode, got {type(inp).__name__}"
                     )
+            if sig.shape is Shape.TABLE and inp.shape is Shape.VECTOR:
+                raise DslTypeError(
+                    f"'{self.func_name}' argument {i} expects a table ({sig}), got the series"
+                    f" {inp._describe()} ({inp.signature}). Register it with register_table:"
+                    " a series sits on the graph's time axis, so every output would be as"
+                    " long as it."
+                )
             if sig != inp.signature:
                 raise DslTypeError(
                     f"'{self.func_name}' argument {i}: expected {sig},"
@@ -225,6 +255,16 @@ class CallFactory:
         return f"<CallFactory '{self.func_name}'>"
 
 
+# The one feature the DSL itself uses: ``series[i]``. Its kernels live with the
+# rest in ``kernelsmith.features``, which every backend loads when compiling.
+element = CallFactory(
+    "element",
+    input_signature=[Signature(DType.FLOAT32, Shape.VECTOR), Signature(DType.INT32)],
+    buffer_signature=[],
+    output_signature=[Signature(DType.FLOAT32)],
+)
+
+
 class Graph:
     """Container for one computation: named inputs, params and outputs.
 
@@ -233,7 +273,8 @@ class Graph:
     """
 
     def __init__(self):
-        self.inputs: dict = {}          # name -> ValueNode
+        self.inputs: dict = {}          # name -> ValueNode, series on the time axis
+        self.tables: dict = {}          # name -> ValueNode, reference data off it
         self.params: dict = {}          # name -> ValueNode
         self.outputs: dict = {}         # name -> ValueNode
         self.output_names: dict = {}    # ValueNode -> name  (inverse of outputs)
@@ -241,10 +282,32 @@ class Graph:
         self.op_levels: dict = {}
 
     def register_input(self, name: str, dtype: DType = DType.FLOAT32) -> ValueNode:
+        """A series on the graph's time axis: every bar of it is computed on, and
+        its length is the length of every series in the graph."""
         if name in self.inputs:
             return self.inputs[name]
+        if name in self.tables:
+            raise GraphError(f"'{name}' is already registered as a table")
         node = ValueNode(dtype, Shape.VECTOR, VarRole.INPUT, name=name)
         self.inputs[name] = node
+        return node
+
+    def register_table(self, name: str, dtype: DType = DType.FLOAT32) -> ValueNode:
+        """Reference data off the time axis: any length, shared by every parameter
+        set, and read only by features - e.g. a price history that a simulation
+        resamples, while the simulated path is the graph's series.
+
+        Passed to ``run`` in the same dict as the inputs. The name becomes an
+        identifier in the generated kernel, so it must be a valid one.
+        """
+        if name in self.tables:
+            return self.tables[name]
+        if name in self.inputs:
+            raise GraphError(f"'{name}' is already registered as an input")
+        if not name.isidentifier():
+            raise GraphError(f"table name must be a valid identifier, got '{name}'")
+        node = ValueNode(dtype, Shape.TABLE, VarRole.INPUT, name=name)
+        self.tables[name] = node
         return node
 
     def register_param(self, name: str, dtype: DType) -> ValueNode:
@@ -271,6 +334,8 @@ class Graph:
             )
         if name in self.outputs:
             raise GraphError(f"duplicate output name '{name}'")
+        if node.shape is Shape.TABLE:
+            raise GraphError(f"output '{name}': a table is reference data you pass in, not a result")
         self.outputs[name] = node
         self.output_names[node] = name
 
@@ -331,9 +396,11 @@ class Graph:
     ):
         """Layered plot of the call graph.
 
-        Circles = ValueNodes (colored by role), squares = feature Calls,
+        Circles = ValueNodes (colored by role, tables in their own color),
+        squares = feature Calls (``series[i]`` labelled with its index),
         diamonds = Exprs, hexagons = fused expression groups, red outline =
-        registered outputs. Requires the optional viz dependencies (networkx,
+        registered outputs. Inputs read ``f32[:]`` and tables ``f32 table``,
+        so the two differ in the labels as well as the colors. Requires the optional viz dependencies (networkx,
         matplotlib).
 
         Pass ``ops`` and ``op_levels`` from a pass to plot a transformed
@@ -346,8 +413,8 @@ class Graph:
         import matplotlib.pyplot as plt
         from matplotlib.lines import Line2D
 
-        # deferred: ir imports dsl, so this cannot be a module-level import
         from kernelsmith.ir.fuse import FusedExpr
+        # deferred: ir imports dsl, so this cannot be a module-level import
 
         if not self.ops:
             self.build()
@@ -362,7 +429,11 @@ class Graph:
         def _value_label(v: ValueNode) -> str:
             if self.is_output(v):
                 return f"{self.output_names[v]}\n{_dt[v.dtype]}"
-            if v.role in (VarRole.INPUT, VarRole.PARAM):
+            if v.shape is Shape.TABLE:
+                return f"{v.name}\n{_dt[v.dtype]} table"
+            if v.role is VarRole.INPUT:
+                return f"{v.name}\n{_dt[v.dtype]}[:]"
+            if v.role is VarRole.PARAM:
                 return f"{v.name}\n{_dt[v.dtype]}"
             if v.role is VarRole.CONST:
                 return f"{v.val}\n{_dt[v.dtype]}"
@@ -395,6 +466,9 @@ class Graph:
                 kind = "expr"
             G.add_node(id(op), obj=op, kind=kind, layer=2 * op_levels[op] + 1)
             label = op.name
+            if isinstance(op, Call) and op.factory is element:
+                index = replace.get(op.args[1], op.args[1])
+                label = f"[{index.val if index.role is VarRole.CONST else index.name}]"
             if isinstance(op, FusedExpr):
                 formula = op.formula()
                 if formula is not None:
@@ -403,6 +477,13 @@ class Graph:
 
             for arg in op.args:
                 arg = replace.get(arg, arg)
+                if arg.role is VarRole.CONST and id(arg) not in G:
+                    # every literal is its own node with one consumer: draw it
+                    # beside that op, not in the first column, where its edge
+                    # would cross the whole plot and appear to come from
+                    # whatever it passes behind
+                    G.add_node(id(arg), obj=arg, kind="value", layer=2 * op_levels[op])
+                    labels[id(arg)] = _value_label(arg)
                 _add_value(arg)
                 G.add_edge(id(arg), id(op))
 
@@ -418,16 +499,22 @@ class Graph:
             figsize = (max(9, 1.8 * len(set(layers))), max(5, 1.3 * colmax))
         plt.figure(figsize=figsize)
 
-        role_colors = {
-            VarRole.INPUT: "#9ed49e",
-            VarRole.PARAM: "#9ec2e8",
-            VarRole.CONST: "#d9d9d9",
-            VarRole.TEMP: "#f5f0c8",
+        # a table is an input by role, but drawn apart: it is reference data,
+        # not a series the graph computes along
+        value_colors = {
+            "input": "#9ed49e",
+            "table": "#e3b5d6",
+            "param": "#9ec2e8",
+            "const": "#d9d9d9",
+            "temp": "#f5f0c8",
         }
 
+        def _category(v: ValueNode) -> str:
+            return "table" if v.shape is Shape.TABLE else v.role.value
+
         value_ids = [n for n, d in G.nodes(data=True) if d["kind"] == "value"]
-        for role, color in role_colors.items():
-            ids = [n for n in value_ids if G.nodes[n]["obj"].role is role]
+        for category, color in value_colors.items():
+            ids = [n for n in value_ids if _category(G.nodes[n]["obj"]) == category]
             if not ids:
                 continue
             nx.draw_networkx_nodes(
@@ -462,8 +549,8 @@ class Graph:
 
         legend = [
             Line2D([], [], marker="o", color="w", markerfacecolor=c, markeredgecolor="#444444",
-                   markersize=11, label=f"value : {r.value}")
-            for r, c in role_colors.items()
+                   markersize=11, label=f"value : {category}")
+            for category, c in value_colors.items()
         ]
         legend += [
             Line2D([], [], marker="D", color="w", markerfacecolor="#cdb6e8",
@@ -475,7 +562,9 @@ class Graph:
             Line2D([], [], marker="o", color="w", markerfacecolor="w",
                    markeredgecolor="#c0392b", markersize=11, label="registered output"),
         ]
-        plt.legend(handles=legend, loc="upper left", fontsize=8, frameon=False)
+        # outside the axes, so it can never sit on top of a node
+        plt.legend(handles=legend, loc="upper left", bbox_to_anchor=(1.0, 1.0),
+                   fontsize=8, frameon=False)
         plt.axis("off")
         plt.tight_layout()
 

@@ -13,7 +13,7 @@ from kernelsmith.ir.fuse import FusedExpr, fuse
 from kernelsmith.ir.liveness import Liveness
 
 _DTYPE_TAG = {DType.FLOAT32: "f32", DType.INT32: "i32", DType.BOOL: "b1"}
-_SHAPE_TAG = {Shape.VECTOR: "v", Shape.SCALAR: "s"}
+_SHAPE_TAG = {Shape.VECTOR: "v", Shape.SCALAR: "s", Shape.TABLE: "t"}
 
 
 

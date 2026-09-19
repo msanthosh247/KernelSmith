@@ -15,7 +15,7 @@ import numpy as np
 from numba import config, njit, prange, set_num_threads
 
 from kernelsmith import Graph
-from kernelsmith.backends.cpu import CpuBackend
+from kernelsmith.backends.cpu import CPUBackend
 from kernelsmith.backends.numba_cpu import NumbaCPU_Backend
 from kernelsmith.features import sma
 from kernelsmith.features.numba_cpu_impl import sma_numba_cpu
@@ -27,7 +27,9 @@ def hand_written(close, opn, fast, slow, med, buf_fast, buf_slow, out):
     n_bars = close.shape[0]
     for p in prange(n_params):
         for t in range(n_bars):
-            med[p, t] = (close[t] + opn[t]) / 2
+            # float32 throughout, like the generated kernel: a bare 2 would
+            # make this a float64 division
+            med[p, t] = (close[t] + opn[t]) / np.float32(2.0)
         sma_numba_cpu(med[p], fast[p], buf_fast[p])
         sma_numba_cpu(med[p], slow[p], buf_slow[p])
         for t in range(n_bars):                       # the three elementwise
@@ -74,7 +76,7 @@ def main():
         params = {"fast": fast, "slow": slow}
 
         generated = NumbaCPU_Backend().compile(build_graph())
-        interpreted = CpuBackend().compile(build_graph())
+        interpreted = CPUBackend().compile(build_graph())
 
         t_hand = best_of(lambda: hand_written(close, opn, fast, slow, *scratch, out))
         t_generated = best_of(lambda: generated.run(inputs, params))
@@ -97,8 +99,6 @@ def scaling(n_params=8192, n_bars=4000):
     The curve flattens once memory bandwidth saturates - past that point the
     only way to go faster is to move less data, which is what fusion does.
     """
-    from kernelsmith.backends.numba_cpu import kernel_parameters
-
     rng = np.random.default_rng(0)
     close = (np.cumsum(rng.normal(0, 1, n_bars)) + 100).astype(np.float32)
     opn = (close + 0.1).astype(np.float32)
@@ -110,10 +110,10 @@ def scaling(n_params=8192, n_bars=4000):
         "inp_f32": np.stack([close, opn], axis=1),
         "par_i32": np.stack([fast, slow], axis=1),
         **program._buffers(n_params, n_bars),
-        "n_params": n_params,
-        "n_bars": n_bars,
+        "n_params": np.int32(n_params),
+        "n_bars": np.int32(n_bars),
     }
-    ordered = [arrays[n] for n in kernel_parameters(program.graph, program.allocation, program.binding)]
+    ordered = [arrays[n] for n in program.param_names]
 
     print(f"{n_params} parameter sets x {n_bars} bars"
           f"   ({config.NUMBA_NUM_THREADS} threads available)\n")

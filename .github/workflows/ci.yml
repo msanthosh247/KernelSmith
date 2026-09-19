@@ -19,4 +19,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e .[dev]
+      # no GPU on hosted runners: the CUDA tests skip themselves here...
       - run: pytest -q
+      # ...and run here, under numba's CUDA simulator. The simulator has to be
+      # switched on before numba.cuda is first imported, hence its own process.
+      - name: CUDA backend (simulated)
+        run: pytest tests/test_cuda.py tests/test_indicators.py tests/test_sort_by.py tests/test_tables.py tests/test_bootstrap.py -q
+        env:
+          NUMBA_ENABLE_CUDASIM: "1"

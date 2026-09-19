@@ -38,8 +38,10 @@ class FusedExpr(Op):
     to a buffer, which is where the saving comes from.
     """
 
-    def __init__(self, root: Expr):
+    def __init__(self, root: Expr, replace: Optional[Dict[ValueNode, ValueNode]] = None):
         self.root = root
+        # members still name values CSE dropped; every lookup goes through this
+        self.replace = replace or {}
         self.members: List[Expr] = [root]
         self._member_set = {root}
         self._args: Optional[Tuple[ValueNode, ...]] = None
@@ -81,6 +83,7 @@ class FusedExpr(Op):
         def walk(member: Expr) -> str:
             parts = []
             for operand in member.args:
+                operand = self.replace.get(operand, operand)
                 inner = produced.get(operand)
                 if inner is not None:
                     parts.append(walk(inner))
@@ -113,6 +116,9 @@ class FusedExpr(Op):
             external = []
             for member in self.members:
                 for operand in member.args:
+                    # after CSE, 'x * x' can name x twice under two nodes; only
+                    # the kept one is produced here, the other has no buffer
+                    operand = self.replace.get(operand, operand)
                     if operand not in internal:
                         external.append(operand)
             # dict.fromkeys dedupes without the run-to-run reordering a set
@@ -171,7 +177,7 @@ def fuse(
         if not isinstance(op, Expr) or op in grouped:
             continue
 
-        group = FusedExpr(op)
+        group = FusedExpr(op, replace)
         grouped[op] = group
         pending = [op]
 

@@ -19,7 +19,8 @@ Homepage = "https://github.com/msanthosh247/KernelSmith"
 [project.optional-dependencies]
 viz = ["networkx>=3.0", "matplotlib>=3.7"]
 numba = ["numba>=0.59"]
-dev = ["pytest>=8", "networkx>=3.0", "matplotlib>=3.7", "numba>=0.59"]
+cuda = ["numba>=0.59", "numba-cuda>=0.30"]
+dev = ["pytest>=8", "networkx>=3.0", "matplotlib>=3.7", "numba>=0.59", "numba-cuda>=0.30"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

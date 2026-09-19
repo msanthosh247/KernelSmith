@@ -3,15 +3,16 @@ import pytest
 
 pytest.importorskip("numba")
 
-import kernelsmith.backends.numba_cpu as numba_backend  # noqa: E402
+import kernelsmith.backends.generated as generated  # noqa: E402
 from kernelsmith import CallFactory, F4, Graph, GraphError, I4, KernelsmithError  # noqa: E402
-from kernelsmith.backends.cpu import CpuBackend  # noqa: E402
+from kernelsmith.backends.cpu import CPUBackend  # noqa: E402
 from kernelsmith.backends.numba_cpu import (  # noqa: E402
     NUMBA_CPU_FN_REGISTER,
     NumbaCPU_Backend,
     register_numba_cpu,
 )
 from kernelsmith.features import rolling_min_max, sma  # noqa: E402
+from kernelsmith.ir.fuse import FusedExpr  # noqa: E402
 
 
 def prices(n=150, seed=0):
@@ -21,7 +22,7 @@ def prices(n=150, seed=0):
 
 def assert_parity(build, inputs, params):
     """The acceptance test: numba must agree with the numpy oracle exactly."""
-    expected = CpuBackend().compile(build()).run(inputs, params)
+    expected = CPUBackend().compile(build()).run(inputs, params)
     actual = NumbaCPU_Backend().compile(build()).run(inputs, params)
 
     assert set(expected) == set(actual)
@@ -109,6 +110,20 @@ def test_duplicate_removed_by_cse_still_matches():
     assert_parity(build, {"close": prices()}, {"n": [7]})
 
 
+def test_operand_repeated_after_cse():
+    """Squares and self-ratios are everywhere in indicators (variance, RSI)."""
+    def build():
+        g = Graph()
+        close, n = g.register_input("close"), g.int_param("n")
+        dev = close - sma(close, n)
+        g.register_output("sq", (close + 1) * (close + 1))
+        g.register_output("var", sma(dev * dev, n))
+        g.register_output("ratio", (close - 1) / (close - 1))
+        return g
+
+    assert_parity(build, {"close": prices()}, {"n": [3, 7]})
+
+
 def test_single_parameter_set():
     def build():
         g = Graph()
@@ -135,8 +150,11 @@ def test_fusion_does_not_change_results(build, monkeypatch):
 
     fused = NumbaCPU_Backend().compile(build()).run(inputs, params)
 
-    monkeypatch.setattr(numba_backend, "fuse", lambda ops, outputs=(), replace=None: (ops, {}))
-    plain = NumbaCPU_Backend().compile(build()).run(inputs, params)
+    # patch where the pipeline looks it up - the lowering is shared, in generated.py
+    monkeypatch.setattr(generated, "fuse", lambda ops, outputs=(), replace=None: (ops, {}))
+    plain_program = NumbaCPU_Backend().compile(build())
+    assert not any(isinstance(op, FusedExpr) for op in plain_program.ops)   # really unfused
+    plain = plain_program.run(inputs, params)
 
     assert set(fused) == set(plain)
     for name in fused:
@@ -269,6 +287,54 @@ def test_scratch_is_passed_positionally():
         assert call_line.count("out_f32_v[p,") == 1
     finally:
         NUMBA_CPU_FN_REGISTER.pop(scratchy, None)
+
+
+def test_graph_with_no_ops_still_compiles():
+    """Every output is a bare input or param, so there is nothing to compute -
+    the prange body must be emitted as `pass`, not left empty."""
+    g = Graph()
+    close = g.register_input("close")
+    n = g.int_param("n")
+    g.register_output("passthrough", close)
+    g.register_output("period", n)
+
+    program = NumbaCPU_Backend().compile(g)
+    assert "pass" in program.source
+
+    data = prices(30)
+    out = program.run({"close": data}, {"n": [5, 7]})
+    np.testing.assert_array_equal(out["passthrough"], np.stack([data, data]))
+    np.testing.assert_array_equal(out["period"], [5, 7])
+
+
+def test_program_exposes_its_source_and_call_convention():
+    g = Graph()
+    close = g.register_input("close")
+    g.register_output("avg", sma(close, g.int_param("n")))
+    program = NumbaCPU_Backend().compile(g)
+
+    assert program.get_generated_code() == program.source
+    def_line = next(l for l in program.source.splitlines() if l.startswith("def kernel("))
+    assert def_line == f"def kernel({', '.join(program.param_names)}):"
+
+
+def test_feature_names_must_be_unique_per_backend():
+    """Kernels are bound by name and cached by source text, so two different
+    features sharing a name would let one reuse the other's compiled kernel."""
+    first = CallFactory("twin", [F4[:], I4], [], [F4[:]])
+    second = CallFactory("twin", [F4[:], I4], [], [F4[:]])
+
+    def kernel(values, period, out):          # noqa: ARG001
+        pass
+
+    try:
+        register_numba_cpu(first)(kernel)
+        register_numba_cpu(first)(kernel)     # re-registering the same factory is fine
+        with pytest.raises(KernelsmithError, match="unique"):
+            register_numba_cpu(second)(kernel)
+    finally:
+        NUMBA_CPU_FN_REGISTER.pop(first, None)
+        NUMBA_CPU_FN_REGISTER.pop(second, None)
 
 
 def test_emission_is_deterministic():
